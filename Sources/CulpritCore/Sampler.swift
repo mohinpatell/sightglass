@@ -24,17 +24,32 @@ public struct RawSample: Sendable {
     public let totalCores: Double
     /// Every process that used CPU in the interval, busiest first.
     public let processes: [ProcessUsage]
+    /// False when other users' processes were not measured for this sample, so any
+    /// CPU missing from `processes` may be theirs.
+    public let sawEveryProcess: Bool
+
+    public init(totalCores: Double, processes: [ProcessUsage], sawEveryProcess: Bool) {
+        self.totalCores = totalCores
+        self.processes = processes
+        self.sawEveryProcess = sawEveryProcess
+    }
 }
 
 /// Reads cumulative CPU time for every process and turns two readings into usage.
 ///
-/// Processes owned by the current user are read directly with `proc_pid_rusage`.
-/// That call fails with EPERM for everyone else's processes, so those come from
-/// `/bin/ps`, which is setuid root.
+/// Processes owned by the current user are read directly with `proc_pid_rusage`,
+/// which costs under a millisecond for all of them. That call fails with EPERM for
+/// everyone else's processes, so those come from `/bin/ps`, which is setuid root.
+/// A `ps` run costs 15 to 35 ms, so it only happens while the kernel reports at
+/// least `psThreshold` cores of work that the direct readings do not explain.
 public final class Sampler {
+    public var psThreshold = 0.25
+
     private var previousCPU: [pid_t: UInt64] = [:]
     private var previousTime: UInt64 = 0
-    private var previousTicks: [UInt32]?
+    private var previousTicks: [UInt32] = []
+    private var psCPU: [pid_t: UInt64] = [:]
+    private var psTime: UInt64 = 0
     private var timebase = mach_timebase_info_data_t()
 
     public init() {
@@ -46,44 +61,56 @@ public final class Sampler {
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         let ticks = hostTicks()
         var cpu: [pid_t: UInt64] = [:]
-        var psPaths: [pid_t: String] = [:]
-
+        var unreadable: [pid_t] = []
         for pid in allPids() {
-            if let ns = nativeCPU(pid) { cpu[pid] = ns }
-        }
-        for row in parsePS(runPS()) where cpu[row.pid] == nil {
-            cpu[row.pid] = row.cpuNanos
-            psPaths[row.pid] = row.path
+            if let ns = nativeCPU(pid) { cpu[pid] = ns } else { unreadable.append(pid) }
         }
 
-        defer {
-            previousCPU = cpu
-            previousTime = now
-            previousTicks = ticks
-        }
-        guard previousTime != 0, let before = previousTicks else { return nil }
+        let before = (cpu: previousCPU, time: previousTime, ticks: previousTicks)
+        previousCPU = cpu
+        previousTime = now
+        previousTicks = ticks
+        guard before.time != 0 else { return nil }
 
-        let interval = Double(now - previousTime)
+        let interval = Double(now - before.time)
         var processes: [ProcessUsage] = []
         for (pid, ns) in cpu {
             // A missing or larger previous value means a new process or a reused pid.
-            guard let old = previousCPU[pid], ns > old else { continue }
-            let path = psPaths[pid] ?? nativePath(pid) ?? nativeName(pid)
+            guard let old = before.cpu[pid], ns > old else { continue }
+            let path = nativePath(pid) ?? nativeName(pid)
             // Only XPC services need the extra lookup, everything else names itself.
             let responsible = path.contains(".xpc/") ? nativePath(responsiblePid(pid)) : nil
-            let app = appName(path: path, responsiblePath: responsible)
+            let arguments = isInterpreter(path: path) ? nativeArguments(pid) : []
+            let app = appName(path: path, responsiblePath: responsible, arguments: arguments)
             processes.append(ProcessUsage(pid: pid, path: path, app: app, cores: Double(ns - old) / interval))
         }
-        processes.sort { $0.cores > $1.cores }
 
         // Tick counters are 32 bit and wrap, so subtract each one with wrapping.
-        let delta = zip(ticks, before).map { UInt64($0 &- $1) }
+        let delta = zip(ticks, before.ticks).map { UInt64($0 &- $1) }
         let busy = delta[Int(CPU_STATE_USER)] + delta[Int(CPU_STATE_SYSTEM)] + delta[Int(CPU_STATE_NICE)]
         let all = busy + delta[Int(CPU_STATE_IDLE)]
         let cpus = Double(ProcessInfo.processInfo.activeProcessorCount)
         let total = all == 0 ? 0 : Double(busy) / Double(all) * cpus
 
-        return RawSample(totalCores: total, processes: processes)
+        var sawEveryProcess = false
+        if total - processes.reduce(0, { $0 + $1.cores }) >= psThreshold {
+            let rows = parsePS(runPS(pids: unreadable))
+            // Deltas only mean something against a ps reading from the previous sample.
+            // Otherwise this run is just the baseline for the next one.
+            if psTime == before.time {
+                sawEveryProcess = true
+                for row in rows {
+                    guard let old = psCPU[row.pid], row.cpuNanos > old else { continue }
+                    processes.append(ProcessUsage(pid: row.pid, path: row.path, app: appName(path: row.path),
+                                                  cores: Double(row.cpuNanos - old) / interval))
+                }
+            }
+            psCPU = Dictionary(rows.map { ($0.pid, $0.cpuNanos) }, uniquingKeysWith: { first, _ in first })
+            psTime = now
+        }
+
+        processes.sort { $0.cores > $1.cores }
+        return RawSample(totalCores: total, processes: processes, sawEveryProcess: sawEveryProcess)
     }
 
     private func allPids() -> [pid_t] {
@@ -111,6 +138,16 @@ public final class Sampler {
         return String(cString: buffer)
     }
 
+    /// The process's argv. Empty for processes owned by other users.
+    private func nativeArguments(_ pid: pid_t) -> [String] {
+        var mib = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4 else { return [] }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > 4 else { return [] }
+        return parseProcArgs(Array(buffer.prefix(size)))
+    }
+
     private func nativeName(_ pid: pid_t) -> String {
         var buffer = [CChar](repeating: 0, count: 256)
         proc_name(pid, &buffer, UInt32(buffer.count))
@@ -129,11 +166,11 @@ public final class Sampler {
         return [info.cpu_ticks.0, info.cpu_ticks.1, info.cpu_ticks.2, info.cpu_ticks.3]
     }
 
-    private func runPS() -> String {
+    private func runPS(pids: [pid_t]) -> String {
         let task = Process()
         let pipe = Pipe()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-axo", "pid=,time=,comm="]
+        task.arguments = ["-o", "pid=,time=,comm=", "-p", pids.map(String.init).joined(separator: ",")]
         task.standardOutput = pipe
         do { try task.run() } catch { return "" }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -153,7 +190,7 @@ public struct PSRow: Equatable, Sendable {
     public let path: String
 }
 
-/// Parses the output of `ps -axo pid=,time=,comm=`.
+/// Parses the output of `ps -o pid=,time=,comm=`.
 /// The time column looks like `1842:31.12` (minutes, seconds, hundredths).
 public func parsePS(_ output: String) -> [PSRow] {
     output.split(separator: "\n").compactMap { line in
@@ -166,4 +203,21 @@ public func parsePS(_ output: String) -> [PSRow] {
         }
         return PSRow(pid: pid, cpuNanos: UInt64(seconds * 1e9), path: String(fields[2]))
     }
+}
+
+/// Parses a `KERN_PROCARGS2` buffer: a 32 bit argc, the executable path, zero
+/// padding, then argc zero terminated strings (the environment follows and is ignored).
+public func parseProcArgs(_ buffer: [UInt8]) -> [String] {
+    guard buffer.count > 4 else { return [] }
+    let argc = buffer.withUnsafeBytes { Int($0.loadUnaligned(as: Int32.self)) }
+    var index = 4
+    while index < buffer.count, buffer[index] != 0 { index += 1 }
+    while index < buffer.count, buffer[index] == 0 { index += 1 }
+    var arguments: [String] = []
+    while arguments.count < argc, index < buffer.count {
+        let end = buffer[index...].firstIndex(of: 0) ?? buffer.count
+        arguments.append(String(decoding: buffer[index..<end], as: UTF8.self))
+        index = end + 1
+    }
+    return arguments
 }

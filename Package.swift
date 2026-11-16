@@ -7,6 +7,7 @@ let package = Package(
     targets: [
         .target(name: "CulpritCore"),
         .executableTarget(name: "culprit", dependencies: ["CulpritCore"]),
+        .executableTarget(name: "CPUCulprit", dependencies: ["CulpritCore"]),
         .testTarget(name: "CulpritCoreTests", dependencies: ["CulpritCore"]),
     ],
     swiftLanguageModes: [.v5]
