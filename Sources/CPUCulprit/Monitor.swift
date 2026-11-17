@@ -2,6 +2,12 @@ import CulpritCore
 import Foundation
 import Observation
 
+/// One reading in the menu bar: its text and the SF Symbol that labels it.
+struct MenuBarItem: Equatable {
+    let symbol: String
+    let text: String
+}
+
 /// Samples on a background queue and publishes results on the main queue.
 @Observable
 final class Monitor {
@@ -22,8 +28,8 @@ final class Monitor {
     private(set) var currentSpike: Spike?
     private(set) var ledger = EnergyLedger()
 
-    /// Called on the main queue after every sample with the new menu bar text.
-    @ObservationIgnored var onHeadline: ((String?) -> Void)?
+    /// Called on the main queue after every sample with the new menu bar readings.
+    @ObservationIgnored var onHeadline: (([MenuBarItem]) -> Void)?
 
     @ObservationIgnored private var detector: SpikeDetector
     @ObservationIgnored private let store = SpikeStore()
@@ -81,17 +87,23 @@ final class Monitor {
         timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(100))
     }
 
-    /// Menu bar text, nil before the first sample or when every part is switched off.
-    /// The parts are chosen in the panel: CPU use, watts the Mac is using, and what
-    /// the battery is gaining or losing.
-    var headline: String? {
-        guard let latest else { return nil }
+    /// Menu bar readings, empty before the first sample or when every one is switched
+    /// off. They are chosen in the panel: CPU use, watts the Mac is using, and what the
+    /// battery is gaining or losing.
+    var headline: [MenuBarItem] {
+        guard let latest else { return [] }
         let defaults = UserDefaults.standard
-        var parts: [String] = []
-        if defaults.bool(forKey: "menuBarCPU") { parts.append(totalPercent(latest.totalCores)) }
-        if defaults.bool(forKey: "menuBarDraw"), let draw = latest.drawWatts { parts.append(watts(draw)) }
-        if defaults.bool(forKey: "menuBarNet"), let net = latest.battery?.netWatts { parts.append(signedWatts(net)) }
-        return parts.isEmpty ? nil : parts.joined(separator: "  ")
+        var items: [MenuBarItem] = []
+        if defaults.bool(forKey: "menuBarCPU") {
+            items.append(MenuBarItem(symbol: "cpu", text: totalPercent(latest.totalCores)))
+        }
+        if defaults.bool(forKey: "menuBarDraw"), let draw = latest.drawWatts {
+            items.append(MenuBarItem(symbol: "bolt.fill", text: watts(draw)))
+        }
+        if defaults.bool(forKey: "menuBarNet"), let net = latest.battery?.netWatts {
+            items.append(MenuBarItem(symbol: net >= 0 ? "battery.100.bolt" : "battery.25", text: signedWatts(net)))
+        }
+        return items
     }
 
     /// Redraws the menu bar text now, for when its settings change between samples.

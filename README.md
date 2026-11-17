@@ -2,7 +2,8 @@
 
 A macOS menu bar app that names what is using your CPU and your battery. The menu
 bar shows total CPU use right now ("40.3%"), and can also show the watts the Mac is
-using and what the battery is gaining or losing. Click it for two views:
+using and what the battery is gaining or losing, each with a small symbol in front.
+Click it for two views:
 
 - **CPU:** the top apps, a stacked chart of the last 10 minutes, and a log of spikes
   with who caused each one. Every number is a share of the whole machine, so 100%

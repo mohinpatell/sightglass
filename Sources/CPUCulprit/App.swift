@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let monitor = Monitor()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
-    private var shownHeadline: String?
+    private var shown: [MenuBarItem] = []
 
     static func main() {
         let app = NSApplication.shared
@@ -22,27 +22,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
-        draw(headline: nil)
-        monitor.onHeadline = { [weak self] headline in
-            guard let self, headline != self.shownHeadline else { return }
-            self.shownHeadline = headline
-            self.draw(headline: headline)
+        draw([])
+        monitor.onHeadline = { [weak self] items in
+            guard let self, items != self.shown else { return }
+            self.shown = items
+            self.draw(items)
         }
         popover.behavior = .transient
         popover.delegate = self
         runDevFlags()
     }
 
-    private func draw(headline: String?) {
+    /// One reading is shown as a bare number. Two or more each get a small symbol in
+    /// front so it is clear which is which.
+    private func draw(_ items: [MenuBarItem]) {
         guard let button = statusItem.button else { return }
-        if let headline {
-            let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular)
-            button.image = nil
-            button.attributedTitle = NSAttributedString(string: headline, attributes: [.font: font])
-        } else {
+        guard !items.isEmpty else {
             button.title = ""
             button.image = NSImage(systemSymbolName: "cpu", accessibilityDescription: "CPU Culprit")
+            return
         }
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular)
+        let symbols = NSImage.SymbolConfiguration(pointSize: font.pointSize - 2.5, weight: .medium)
+        let title = NSMutableAttributedString()
+        for (index, item) in items.enumerated() {
+            if index > 0 { title.append(NSAttributedString(string: "  ")) }
+            if items.count > 1,
+               let image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: nil)?
+                   .withSymbolConfiguration(symbols) {
+                let attachment = NSTextAttachment()
+                attachment.image = image
+                // Sit the symbol on the text's optical center instead of its baseline.
+                attachment.bounds = CGRect(x: 0, y: (font.capHeight - image.size.height) / 2,
+                                           width: image.size.width, height: image.size.height)
+                title.append(NSAttributedString(attachment: attachment))
+                title.append(NSAttributedString(string: "\u{2009}"))
+            }
+            title.append(NSAttributedString(string: item.text))
+        }
+        title.addAttribute(.font, value: font, range: NSRange(location: 0, length: title.length))
+        button.image = nil
+        button.attributedTitle = title
     }
 
     @objc private func togglePanel() {

@@ -72,6 +72,15 @@ struct PanelView: View {
             VStack(alignment: .leading, spacing: 6) {
                 intervalRow("Update on power", onBattery: false)
                 intervalRow("Update on battery", onBattery: true)
+                HStack {
+                    Text("Menu bar shows").frame(width: 122, alignment: .leading)
+                    HStack(spacing: 4) {
+                        menuBarToggle("CPU", help: "CPU use, out of 100", isOn: $menuBarCPU)
+                        menuBarToggle("Watts", help: "Power the Mac is using", isOn: $menuBarDraw)
+                        menuBarToggle("Battery", help: "What the battery is gaining or losing", isOn: $menuBarNet)
+                    }
+                    .onChange(of: [menuBarCPU, menuBarDraw, menuBarNet]) { monitor.refreshHeadline() }
+                }
             }
             HStack {
                 Toggle("Open at login", isOn: $opensAtLogin)
@@ -80,18 +89,20 @@ struct PanelView: View {
                         opensAtLogin = SMAppService.mainApp.status == .enabled
                     }
                 Spacer()
-                Menu("Menu bar") {
-                    Toggle("CPU use", isOn: $menuBarCPU)
-                    Toggle("Power the Mac is using", isOn: $menuBarDraw)
-                    Toggle("Battery gain or loss", isOn: $menuBarNet)
-                }
-                .fixedSize()
-                .onChange(of: [menuBarCPU, menuBarDraw, menuBarNet]) { monitor.refreshHeadline() }
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }
         }
         .padding(14)
         .frame(width: 360)
+    }
+
+    /// A push button that stays down while on. Any combination can be on.
+    private func menuBarToggle(_ title: String, help: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            Text(title).lineLimit(1).frame(maxWidth: .infinity)
+        }
+        .toggleStyle(.button)
+        .help(help)
     }
 
     /// The row for the power source in use right now is shown in bold.
