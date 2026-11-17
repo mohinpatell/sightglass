@@ -1,7 +1,8 @@
 # CPU Culprit
 
 A macOS menu bar app that names what is using your CPU and your battery. The menu
-bar shows total CPU use right now ("40.3%"). Click it for two views:
+bar shows total CPU use right now ("40.3%"), and can also show the watts the Mac is
+using and what the battery is gaining or losing. Click it for two views:
 
 - **CPU:** the top apps, a stacked chart of the last 10 minutes, and a log of spikes
   with who caused each one. Every number is a share of the whole machine, so 100%
@@ -46,7 +47,8 @@ instead). The second draws the panel to a PNG after 8 seconds and quits.
 
 Settings can be overridden for one launch on the command line, which is how the panel
 is tested without clicking: `-panelMode energy`, `-showAllApps YES`,
-`-showAllEnergy YES`, `-intervalOnPower 5`, `-intervalOnBattery 10`, `-panelMaxHeight 600`.
+`-showAllEnergy YES`, `-intervalOnPower 5`, `-intervalOnBattery 10`, `-panelMaxHeight 600`,
+`-menuBarDraw YES`, `-menuBarNet YES`, `-menuBarCPU NO`.
 
 ## How it works
 

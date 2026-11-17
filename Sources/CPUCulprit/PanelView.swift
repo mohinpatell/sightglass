@@ -15,6 +15,9 @@ struct PanelView: View {
     /// Height of an expanded "Show all" list: 8 rows, fewer if the screen is short.
     @State private var listHeight: CGFloat = PanelView.fullListHeight
     @AppStorage("showAllEnergy") private var showAllEnergy = false
+    @AppStorage("menuBarCPU") private var menuBarCPU = true
+    @AppStorage("menuBarDraw") private var menuBarDraw = false
+    @AppStorage("menuBarNet") private var menuBarNet = false
 
     private static let fullListHeight: CGFloat = 176
     private static let shortestListHeight: CGFloat = 88
@@ -77,6 +80,13 @@ struct PanelView: View {
                         opensAtLogin = SMAppService.mainApp.status == .enabled
                     }
                 Spacer()
+                Menu("Menu bar") {
+                    Toggle("CPU use", isOn: $menuBarCPU)
+                    Toggle("Power the Mac is using", isOn: $menuBarDraw)
+                    Toggle("Battery gain or loss", isOn: $menuBarNet)
+                }
+                .fixedSize()
+                .onChange(of: [menuBarCPU, menuBarDraw, menuBarNet]) { monitor.refreshHeadline() }
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }
         }

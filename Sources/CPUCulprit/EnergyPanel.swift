@@ -101,7 +101,7 @@ struct EnergyPanel: View {
             flowColumn("Going out", watts(going), note: "used by the Mac")
             Spacer()
             flowColumn(steady ? "Battery" : net > 0 ? "Battery gaining" : "Battery losing",
-                       steady ? "steady" : (net > 0 ? "+" : "\u{2212}") + watts(abs(net)),
+                       signedWatts(net),
                        note: steady ? "" : "\(net > 0 ? "full" : "empty") in about \(duration(hours * 3600))")
                 .foregroundStyle(steady ? Color.primary : net > 0 ? Color.green : Color.orange)
         }

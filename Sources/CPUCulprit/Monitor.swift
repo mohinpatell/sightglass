@@ -33,6 +33,7 @@ final class Monitor {
     var interval: TimeInterval { onBattery ? intervalOnBattery : intervalOnPower }
 
     init() {
+        UserDefaults.standard.register(defaults: ["menuBarCPU": true])
         func saved(_ key: String, fallback: TimeInterval) -> TimeInterval {
             let value = UserDefaults.standard.double(forKey: key)
             return Self.intervalChoices.contains(value) ? value : fallback
@@ -80,9 +81,22 @@ final class Monitor {
         timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(100))
     }
 
-    /// Menu bar text: whole machine CPU use, nil before the first sample.
+    /// Menu bar text, nil before the first sample or when every part is switched off.
+    /// The parts are chosen in the panel: CPU use, watts the Mac is using, and what
+    /// the battery is gaining or losing.
     var headline: String? {
-        latest.map { totalPercent($0.totalCores) }
+        guard let latest else { return nil }
+        let defaults = UserDefaults.standard
+        var parts: [String] = []
+        if defaults.bool(forKey: "menuBarCPU") { parts.append(totalPercent(latest.totalCores)) }
+        if defaults.bool(forKey: "menuBarDraw"), let draw = latest.drawWatts { parts.append(watts(draw)) }
+        if defaults.bool(forKey: "menuBarNet"), let net = latest.battery?.netWatts { parts.append(signedWatts(net)) }
+        return parts.isEmpty ? nil : parts.joined(separator: "  ")
+    }
+
+    /// Redraws the menu bar text now, for when its settings change between samples.
+    func refreshHeadline() {
+        onHeadline?(headline)
     }
 
     private func apply(_ snap: Snapshot) {
@@ -124,6 +138,12 @@ func percent(_ cores: Double) -> String {
 func watts(_ value: Double) -> String {
     if value < 0.9995 { return "\(Int((value * 1000).rounded())) mW" }
     return String(format: value < 9.95 ? "%.1f W" : "%.0f W", value)
+}
+
+/// Battery gain or loss: "+12 W", "\u{2212}5.8 W", or "steady" within 50 mW of zero.
+func signedWatts(_ value: Double) -> String {
+    if abs(value) < 0.05 { return "steady" }
+    return (value > 0 ? "+" : "\u{2212}") + watts(abs(value))
 }
 
 func wattHours(joules: Double) -> String {
