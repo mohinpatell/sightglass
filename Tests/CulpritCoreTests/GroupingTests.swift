@@ -47,6 +47,12 @@ import Testing
     #expect(appName(path: "/usr/bin/clang", arguments: ["clang", "main.c"]) == "clang")
 }
 
+@Test func inlineCodeAndEmptyArgumentsFallBackToTheInterpreterName() {
+    #expect(appName(path: "/usr/bin/python3", arguments: ["python3", "-c", "import time\nwhile True: pass"]) == "python3")
+    #expect(appName(path: "/opt/homebrew/bin/node", arguments: ["node", "-e", "for(;;){}"]) == "node")
+    #expect(appName(path: "/opt/homebrew/bin/node", arguments: ["node", ""]) == "node")
+}
+
 @Test func parsesProcArgsBuffer() {
     var buffer: [UInt8] = [2, 0, 0, 0]
     buffer += Array("/usr/bin/python3\0\0\0".utf8)

@@ -11,9 +11,15 @@ import Foundation
 /// full argv) is given the script is named too: "Python train.py".
 public func appName(path: String, responsiblePath: String? = nil, arguments: [String] = []) -> String {
     let base = baseName(path: path, responsiblePath: responsiblePath)
-    guard isInterpreter(path: path),
-          let script = arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) else { return base }
-    return "\(base) \((script as NSString).lastPathComponent)"
+    guard isInterpreter(path: path) else { return base }
+    for argument in arguments.dropFirst() {
+        // Inline code (`python -c`, `node -e`) has no script name worth showing.
+        if argument == "-c" || argument == "-e" { return base }
+        if argument.hasPrefix("-") { continue }
+        let script = (argument as NSString).lastPathComponent
+        return script.isEmpty ? base : "\(base) \(script.prefix(40))"
+    }
+    return base
 }
 
 public func isInterpreter(path: String) -> Bool {
