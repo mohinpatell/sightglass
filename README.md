@@ -2,7 +2,8 @@
 
 A macOS menu bar app that names what is using your CPU and your battery. The menu
 bar shows total CPU use right now ("40.3%"), and can also show the watts the Mac is
-using and what the battery is gaining or losing, each with a small symbol in front.
+using and what the battery is gaining or losing, told apart by small symbols or by
+thin dividers, which take less room.
 Click it for three views:
 
 - **CPU:** the top apps, a stacked chart of the last 10 minutes, and a log of spikes
@@ -20,9 +21,12 @@ Click it for three views:
 Point at any app in a list and a quit button appears. It asks before doing anything,
 and offers Quit (the app can save first) or Force Quit.
 
-Alerts are off until you pick some from the Alerts menu: an app hogging the CPU for
-5 minutes, losing charge while plugged in, memory under pressure, or under an hour
-of battery left. They arrive as silent notifications.
+Alerts are off until you switch some on from the Alerts page: an app hogging the
+CPU, the whole Mac being busy, losing charge while plugged in, battery running low,
+memory under pressure, or one app holding a lot of memory. Each has its own limits
+(how much, for how long). You also choose how often an alert may repeat and whether
+it plays a sound, and you can mute an app from the alert itself, which is meant for
+long jobs you started on purpose.
 
 ## Build and run
 
@@ -60,7 +64,7 @@ Settings can be overridden for one launch on the command line, which is how the 
 is tested without clicking: `-panelMode energy`, `-showAllApps YES`,
 `-showAllEnergy YES`, `-intervalOnPower 5`, `-intervalOnBattery 10`, `-panelMaxHeight 600`,
 `-menuBarDraw YES`, `-menuBarNet YES`, `-menuBarCPU NO`, `-showAllMemory YES`,
-`-showQuitButtons YES` (every quit button visible), `-testQuitDialog YES` (opens the
+`-menuBarDividers YES`, `-showAlertsPage YES`, `-showQuitButtons YES` (every quit button visible), `-testQuitDialog YES` (opens the
 quit confirmation without quitting anything). `--test-alert` posts one notification.
 
 ## How it works

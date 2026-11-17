@@ -37,7 +37,7 @@ struct EnergyPanel: View {
     private func nowSection(_ latest: Snapshot, power: ComponentPower, draw: Double) -> some View {
         let parts: [(name: String, watts: Double, color: Color)] = [
             ("CPU", power.cpu, .blue), (graphicsName, power.gpu, .green),
-            (memoryName, power.memory, .purple), ("Screen and rest", latest.restWatts, .gray.opacity(0.5)),
+            (memoryName, power.memory, .purple), (restName, latest.restWatts, .gray.opacity(0.5)),
         ]
         let apps = latest.apps.filter { $0.watts >= 0.0005 }.sorted { $0.watts > $1.watts }
         let top = apps.first?.watts ?? 1

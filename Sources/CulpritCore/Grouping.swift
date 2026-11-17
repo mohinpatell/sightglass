@@ -108,7 +108,7 @@ public struct Snapshot: Sendable {
 
 public let graphicsName = "Graphics"
 public let memoryName = "Memory"
-public let restName = "Screen and everything else"
+public let restName = "Screen and rest"
 
 /// Label for CPU energy the chip measured but did not bill to a readable process:
 /// other users' processes, short lived ones, the kernel, and idle overhead. The

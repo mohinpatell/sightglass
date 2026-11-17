@@ -16,6 +16,10 @@ struct PanelView: View {
     @State private var listHeight: CGFloat = PanelView.fullListHeight
     @AppStorage("showAllEnergy") private var showAllEnergy = false
     @AppStorage("showAllMemory") private var showAllMemory = false
+    @AppStorage("menuBarDividers") private var menuBarDividers = false
+    /// True while the alert settings replace the panel's usual content.
+    /// `-showAlertsPage YES` on the command line opens straight to them.
+    @State private var showingAlerts = UserDefaults.standard.bool(forKey: "showAlertsPage")
     /// The row whose quit button was clicked, while the confirmation is up.
     @State private var quitTarget: AppUsage?
     @AppStorage("menuBarCPU") private var menuBarCPU = true
@@ -74,6 +78,18 @@ struct PanelView: View {
     }
 
     private var content: some View {
+        Group {
+            if showingAlerts {
+                AlertsPage(monitor: monitor) { showingAlerts = false }
+            } else {
+                mainContent
+            }
+        }
+        .padding(14)
+        .frame(width: 360)
+    }
+
+    private var mainContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             Picker("View", selection: $mode) {
                 Text("CPU").tag("cpu")
@@ -95,22 +111,37 @@ struct PanelView: View {
             VStack(alignment: .leading, spacing: 6) {
                 intervalRow("Update on power", onBattery: false)
                 intervalRow("Update on battery", onBattery: true)
-                // The names are too long to share a line with the label, so it sits above.
-                Text("Menu bar shows").padding(.top, 4)
+                // The names are too long to share a line with the label, so it sits above,
+                // with the choice of how readings are told apart beside it.
+                HStack {
+                    Text("Menu bar shows")
+                    Spacer()
+                    Picker("Separate readings with", selection: $menuBarDividers) {
+                        Text("Icons").tag(false)
+                        Text("Dividers").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                    .help("How readings are told apart when more than one is shown")
+                }
+                .padding(.top, 4)
                 HStack(spacing: 6) {
                     menuBarToggle("CPU use", help: "How busy the processor is, out of 100", isOn: $menuBarCPU)
                     menuBarToggle("Power used", help: "Watts the whole Mac is drawing right now", isOn: $menuBarDraw)
                     menuBarToggle("Battery gain/loss", help: "Watts going into or out of the battery", isOn: $menuBarNet)
                 }
-                .onChange(of: [menuBarCPU, menuBarDraw, menuBarNet]) { monitor.refreshHeadline() }
+                .onChange(of: [menuBarCPU, menuBarDraw, menuBarNet, menuBarDividers]) { monitor.refreshHeadline() }
                 HStack {
                     Text("Alerts").frame(width: 122, alignment: .leading)
-                    Menu(monitor.enabledAlerts.isEmpty ? "Off" : "\(monitor.enabledAlerts.count) on") {
-                        ForEach(AlertKind.allCases, id: \.self) { kind in
-                            Toggle(kind.title, isOn: Binding(
-                                get: { monitor.enabledAlerts.contains(kind) },
-                                set: { monitor.setAlert(kind, on: $0) }
-                            ))
+                    Button { showingAlerts = true } label: {
+                        HStack {
+                            let count = monitor.alertSettings.enabled.count
+                            Text(count == 0 ? "Off" : "\(count) on")
+                            Spacer()
+                            Text("Choose").foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -126,8 +157,6 @@ struct PanelView: View {
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }
         }
-        .padding(14)
-        .frame(width: 360)
     }
 
     /// A push button that stays down while on. Any combination can be on.

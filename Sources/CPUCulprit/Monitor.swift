@@ -2,9 +2,10 @@ import CulpritCore
 import Foundation
 import Observation
 
-/// One reading in the menu bar: its text and the SF Symbol that labels it.
+/// One reading in the menu bar: its text and the SF Symbol that labels it. The symbol
+/// is nil when the person chose plain dividers between readings instead.
 struct MenuBarItem: Equatable {
-    let symbol: String
+    let symbol: String?
     let text: String
 }
 
@@ -27,8 +28,8 @@ final class Monitor {
     private(set) var spikes: [Spike]
     private(set) var currentSpike: Spike?
     private(set) var ledger = EnergyLedger()
-    /// Which notifications the person asked for. None by default.
-    private(set) var enabledAlerts: Set<AlertKind>
+    /// Which notifications the person asked for, and their limits. None are on by default.
+    private(set) var alertSettings: AlertSettings
 
     /// Called on the main queue after every sample with the new menu bar readings.
     @ObservationIgnored var onHeadline: (([MenuBarItem]) -> Void)?
@@ -54,8 +55,16 @@ final class Monitor {
         intervalOnPower = onPower
         intervalOnBattery = unplugged
         onBattery = startsOnBattery
-        let savedAlerts = UserDefaults.standard.stringArray(forKey: "enabledAlerts") ?? []
-        enabledAlerts = Set(savedAlerts.compactMap(AlertKind.init(rawValue:)))
+        if let data = UserDefaults.standard.data(forKey: "alertSettings"),
+           let saved = try? JSONDecoder().decode(AlertSettings.self, from: data) {
+            alertSettings = saved
+        } else {
+            // The first version only stored which alerts were on.
+            var settings = AlertSettings()
+            let old = UserDefaults.standard.stringArray(forKey: "enabledAlerts") ?? []
+            settings.enabled = Set(old.compactMap(AlertKind.init(rawValue:)))
+            alertSettings = settings
+        }
         detector = SpikeDetector(totalThreshold: 0.4 * cpuCount, interval: seconds)
         spikes = store.load()
         timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "sampler", qos: .utility))
@@ -97,13 +106,19 @@ final class Monitor {
     }
 
     func setAlert(_ kind: AlertKind, on: Bool) {
-        if on {
-            enabledAlerts.insert(kind)
-            Notifier.shared.requestPermission()
-        } else {
-            enabledAlerts.remove(kind)
-        }
-        UserDefaults.standard.set(enabledAlerts.map(\.rawValue).sorted(), forKey: "enabledAlerts")
+        if on { Notifier.shared.requestPermission() }
+        updateAlerts { if on { $0.enabled.insert(kind) } else { $0.enabled.remove(kind) } }
+    }
+
+    func updateAlerts(_ change: (inout AlertSettings) -> Void) {
+        change(&alertSettings)
+        UserDefaults.standard.set(try? JSONEncoder().encode(alertSettings), forKey: "alertSettings")
+    }
+
+    func sendTestAlert() {
+        Notifier.shared.requestPermission()
+        Notifier.shared.post(Alert(kind: .cpuHog, title: "Test alert from CPU Culprit",
+                                   body: "If you can read this, alerts are working."), sound: alertSettings.sound)
     }
 
     private func reschedule() {
@@ -117,15 +132,17 @@ final class Monitor {
     var headline: [MenuBarItem] {
         guard let latest else { return [] }
         let defaults = UserDefaults.standard
+        let symbols = !defaults.bool(forKey: "menuBarDividers")
         var items: [MenuBarItem] = []
         if defaults.bool(forKey: "menuBarCPU") {
-            items.append(MenuBarItem(symbol: "cpu", text: totalPercent(latest.totalCores)))
+            items.append(MenuBarItem(symbol: symbols ? "cpu" : nil, text: totalPercent(latest.totalCores)))
         }
         if defaults.bool(forKey: "menuBarDraw"), let draw = latest.drawWatts {
-            items.append(MenuBarItem(symbol: "bolt.fill", text: watts(draw)))
+            items.append(MenuBarItem(symbol: symbols ? "bolt.fill" : nil, text: watts(draw)))
         }
         if defaults.bool(forKey: "menuBarNet"), let net = latest.battery?.netWatts {
-            items.append(MenuBarItem(symbol: net >= 0 ? "battery.100.bolt" : "battery.25", text: signedWatts(net)))
+            items.append(MenuBarItem(symbol: symbols ? (net >= 0 ? "battery.100.bolt" : "battery.25") : nil,
+                                     text: signedWatts(net)))
         }
         return items
     }
@@ -149,8 +166,8 @@ final class Monitor {
             try? store.save(spikes)
         }
         currentSpike = detector.current
-        alertEngine.enabled = enabledAlerts
-        for alert in alertEngine.ingest(snap) { Notifier.shared.post(alert) }
+        alertEngine.settings = alertSettings
+        for alert in alertEngine.ingest(snap) { Notifier.shared.post(alert, sound: alertSettings.sound) }
         onHeadline?(headline)
     }
 }

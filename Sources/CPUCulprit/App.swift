@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.behavior = .transient
         popover.delegate = self
         Notifier.shared.start()
+        Notifier.shared.onMute = { [weak self] app in
+            self?.monitor.updateAlerts { $0.mutedApps.insert(app) }
+        }
         runDevFlags()
     }
 
@@ -54,8 +57,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return text
     }
 
-    /// One reading is shown as a bare number. Two or more each get a small symbol in
-    /// front so it is clear which is which.
+    /// A thin, dimmed vertical line with a little air on each side.
+    private lazy var divider: NSAttributedString = {
+        let text = NSMutableAttributedString(string: "\u{2009}\u{2009}|\u{2009}\u{2009}")
+        text.addAttributes([.foregroundColor: NSColor.tertiaryLabelColor,
+                            .font: NSFont.systemFont(ofSize: menuBarFont.pointSize - 1, weight: .light),
+                            .baselineOffset: 1], range: NSRange(location: 2, length: 1))
+        return text
+    }()
+
+    /// One reading is shown as a bare number. Two or more are told apart either by a
+    /// small symbol in front of each, or by a divider between them, as the person chose.
     private func draw(_ items: [MenuBarItem]) {
         guard let button = statusItem.button else { return }
         guard !items.isEmpty else {
@@ -65,14 +77,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         let title = NSMutableAttributedString()
         for (index, item) in items.enumerated() {
-            if index > 0 { title.append(NSAttributedString(string: "  ")) }
-            if items.count > 1, let symbol = symbol(item.symbol) {
+            if index > 0 { title.append(item.symbol == nil ? divider : NSAttributedString(string: "  ")) }
+            if items.count > 1, let name = item.symbol, let symbol = symbol(name) {
                 title.append(symbol)
                 title.append(NSAttributedString(string: "\u{2009}"))
             }
-            title.append(NSAttributedString(string: item.text))
+            title.append(NSAttributedString(string: item.text, attributes: [.font: menuBarFont]))
         }
-        title.addAttribute(.font, value: menuBarFont, range: NSRange(location: 0, length: title.length))
         button.image = nil
         button.attributedTitle = title
     }
@@ -111,11 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func runDevFlags() {
         let args = CommandLine.arguments
         if args.contains("--test-alert") {
-            Notifier.shared.requestPermission()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                Notifier.shared.post(Alert(kind: .cpuHog, title: "Test alert from CPU Culprit",
-                                           body: "If you can read this, notifications are working."))
-            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.monitor.sendTestAlert() }
         }
         if args.contains("--show-panel") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.showPanel() }
