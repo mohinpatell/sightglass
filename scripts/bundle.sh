@@ -4,10 +4,14 @@ set -e
 cd "$(dirname "$0")/.."
 swift build -c release --product CPUCulprit
 APP="CPU Culprit.app"
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
-cp .build/release/CPUCulprit "$APP/Contents/MacOS/CPUCulprit"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+# Assemble and sign under .build first. The repo may sit in an iCloud synced folder,
+# which tags new files with extended attributes while codesign is still working and
+# makes it fail. .build is expected to live outside the synced folder.
+STAGE=".build/bundle/$APP"
+rm -rf "$STAGE"
+mkdir -p "$STAGE/Contents/MacOS"
+cp .build/release/CPUCulprit "$STAGE/Contents/MacOS/CPUCulprit"
+cat > "$STAGE/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -22,8 +26,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-# The repo may sit in an iCloud synced folder, which tags new files with extended
-# attributes that codesign refuses to sign over.
-/usr/bin/xattr -cr "$APP"
-codesign --force --sign - "$APP"
+codesign --force --sign - "$STAGE"
+rm -rf "$APP"
+cp -R "$STAGE" "$APP"
 echo "Built $APP"

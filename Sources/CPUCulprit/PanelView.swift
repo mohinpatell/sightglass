@@ -72,15 +72,14 @@ struct PanelView: View {
             VStack(alignment: .leading, spacing: 6) {
                 intervalRow("Update on power", onBattery: false)
                 intervalRow("Update on battery", onBattery: true)
-                HStack {
-                    Text("Menu bar shows").frame(width: 122, alignment: .leading)
-                    HStack(spacing: 4) {
-                        menuBarToggle("CPU", help: "CPU use, out of 100", isOn: $menuBarCPU)
-                        menuBarToggle("Watts", help: "Power the Mac is using", isOn: $menuBarDraw)
-                        menuBarToggle("Battery", help: "What the battery is gaining or losing", isOn: $menuBarNet)
-                    }
-                    .onChange(of: [menuBarCPU, menuBarDraw, menuBarNet]) { monitor.refreshHeadline() }
+                // The names are too long to share a line with the label, so it sits above.
+                Text("Menu bar shows").padding(.top, 4)
+                HStack(spacing: 6) {
+                    menuBarToggle("CPU use", help: "How busy the processor is, out of 100", isOn: $menuBarCPU)
+                    menuBarToggle("Power used", help: "Watts the whole Mac is drawing right now", isOn: $menuBarDraw)
+                    menuBarToggle("Battery gain/loss", help: "Watts going into or out of the battery", isOn: $menuBarNet)
                 }
+                .onChange(of: [menuBarCPU, menuBarDraw, menuBarNet]) { monitor.refreshHeadline() }
             }
             HStack {
                 Toggle("Open at login", isOn: $opensAtLogin)
@@ -99,7 +98,7 @@ struct PanelView: View {
     /// A push button that stays down while on. Any combination can be on.
     private func menuBarToggle(_ title: String, help: String, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
-            Text(title).lineLimit(1).frame(maxWidth: .infinity)
+            Text(title).lineLimit(1).fixedSize().frame(maxWidth: .infinity)
         }
         .toggleStyle(.button)
         .help(help)
