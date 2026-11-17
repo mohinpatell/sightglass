@@ -6,6 +6,8 @@ import SwiftUI
 struct PanelView: View {
     let monitor: Monitor
     @State private var opensAtLogin = SMAppService.mainApp.status == .enabled
+    /// Remembered between opens, so the list stays the way it was left.
+    @AppStorage("showAllApps") private var showAllApps = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -45,24 +47,39 @@ struct PanelView: View {
                         .monospacedDigit()
                 }
             }
-            let apps = Array((monitor.latest?.apps ?? []).prefix(5))
-            let scale = max(apps.first?.cores ?? 0, 1)
-            ForEach(apps) { app in
-                HStack(spacing: 8) {
-                    Text(app.name).lineLimit(1).truncationMode(.middle).frame(width: 170, alignment: .leading)
-                    GeometryReader { geo in
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(.tint)
-                            .frame(width: geo.size.width * app.cores / scale)
-                            .frame(maxHeight: .infinity, alignment: .center)
+            // Everything that would show as more than 0.0%.
+            let all = (monitor.latest?.apps ?? []).filter { $0.cores / cpuCount >= 0.0005 }
+            let scale = max(all.first?.cores ?? 0, 1)
+            if showAllApps {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(all) { appRow($0, scale: scale) }
                     }
-                    .frame(height: 6)
-                    Text(percent(app.cores)).monospacedDigit().frame(width: 52, alignment: .trailing)
                 }
+                .frame(height: 220)
+            } else {
+                ForEach(all.prefix(5)) { appRow($0, scale: scale) }
             }
-            if apps.isEmpty {
+            if all.isEmpty {
                 Text("Collecting the first sample").foregroundStyle(.secondary)
+            } else if all.count > 5 {
+                Button(showAllApps ? "Show top 5" : "Show all \(all.count)") { showAllApps.toggle() }
+                    .buttonStyle(.link)
             }
+        }
+    }
+
+    private func appRow(_ app: AppUsage, scale: Double) -> some View {
+        HStack(spacing: 8) {
+            Text(app.name).lineLimit(1).truncationMode(.middle).frame(width: 170, alignment: .leading)
+            GeometryReader { geo in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(.tint)
+                    .frame(width: geo.size.width * app.cores / scale)
+                    .frame(maxHeight: .infinity, alignment: .center)
+            }
+            .frame(height: 6)
+            Text(percent(app.cores)).monospacedDigit().frame(width: 52, alignment: .trailing)
         }
     }
 
