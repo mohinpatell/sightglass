@@ -7,6 +7,7 @@ struct EnergyPanel: View {
     let monitor: Monitor
     /// Height of the expanded "Show all" list, set by the panel to fit the screen.
     let listHeight: CGFloat
+    let requestQuit: (AppUsage) -> Void
     @AppStorage("showAllEnergy") private var showAll = false
 
     var body: some View {
@@ -82,7 +83,8 @@ struct EnergyPanel: View {
     }
 
     private func row(_ app: AppUsage, top: Double, draw: Double) -> some View {
-        UsageRow(name: app.name, fraction: app.watts / top, value: share(app.watts / draw), detail: watts(app.watts))
+        UsageRow(name: app.name, fraction: app.watts / top, value: share(app.watts / draw), detail: watts(app.watts),
+                 onQuit: canQuit(app) ? { requestQuit(app) } : nil)
     }
 
     private func status(_ battery: BatteryState, draw: Double) -> String {

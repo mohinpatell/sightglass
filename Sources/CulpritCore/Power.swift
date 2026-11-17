@@ -40,13 +40,26 @@ public final class PowerReader {
 
     /// Nil on Macs without these counters (Intel).
     public init?() {
-        guard let group = IOReportCopyChannelsInGroup("Energy Model" as CFString, nil, 0, 0, 0)?.takeRetainedValue(),
-              let desired = CFDictionaryCreateMutableCopy(nil, 0, group) else { return nil }
+        guard let group = IOReportCopyChannelsInGroup("Energy Model" as CFString, nil, 0, 0, 0)?.takeRetainedValue() as NSDictionary?,
+              let all = group["IOReportChannels"] as? [NSDictionary] else { return nil }
+        // The group has about 70 counters. Subscribing to only the ones used makes a
+        // sample cost a fraction of a millisecond instead of 2.6 ms.
+        let wanted = all.filter { channel in
+            guard let name = IOReportChannelGetChannelName(channel as CFDictionary)?.takeUnretainedValue() as String? else { return false }
+            return Self.isWanted(name)
+        }
+        guard !wanted.isEmpty else { return nil }
+        let desired = NSMutableDictionary(dictionary: group)
+        desired["IOReportChannels"] = wanted
         var subscribed: Unmanaged<CFMutableDictionary>?
-        guard let subscription = IOReportCreateSubscription(nil, desired, &subscribed, 0, nil),
+        guard let subscription = IOReportCreateSubscription(nil, desired as CFMutableDictionary, &subscribed, 0, nil),
               let channels = subscribed?.takeUnretainedValue() else { return nil }
         self.subscription = subscription
         self.channels = channels
+    }
+
+    private static func isWanted(_ name: String) -> Bool {
+        name == "CPU Energy" || name == "GPU Energy" || name.hasPrefix("DRAM")
     }
 
     /// Returns nil on the first call, which only records a baseline.
@@ -64,8 +77,6 @@ public final class PowerReader {
         var cpu = 0.0, gpu = 0.0, memory = 0.0
         for case let channel as CFDictionary in list {
             guard let name = IOReportChannelGetChannelName(channel)?.takeUnretainedValue() as String? else { continue }
-            let isMemory = name.hasPrefix("DRAM")
-            guard name == "CPU Energy" || name == "GPU Energy" || isMemory else { continue }
             let unit = (IOReportChannelGetUnitLabel(channel)?.takeUnretainedValue() as String? ?? "")
                 .trimmingCharacters(in: .whitespaces)
             let perJoule: Double
@@ -76,7 +87,7 @@ public final class PowerReader {
             default: continue
             }
             let joules = Double(IOReportSimpleGetIntegerValue(channel, 0)) / perJoule
-            if isMemory { memory += joules } else if name == "CPU Energy" { cpu += joules } else { gpu += joules }
+            if name.hasPrefix("DRAM") { memory += joules } else if name == "CPU Energy" { cpu += joules } else { gpu += joules }
         }
         let seconds = Double(now - previousTime) / 1e9
         return ComponentPower(cpu: cpu / seconds, gpu: gpu / seconds, memory: memory / seconds)
@@ -103,6 +114,14 @@ public struct BatteryState: Equatable, Sendable {
         self.fullWattHours = fullWattHours
         self.systemWatts = systemWatts
         self.adapterWatts = adapterWatts
+    }
+
+    /// The same state with fresher power figures. The battery controller's own
+    /// figures lag by up to half a minute, which makes charger changes look wrong.
+    public func replacingPower(systemWatts: Double, adapterWatts: Double) -> BatteryState {
+        BatteryState(onBattery: onBattery, percent: percent, remainingWattHours: remainingWattHours,
+                     fullWattHours: fullWattHours, systemWatts: systemWatts,
+                     adapterWatts: onBattery ? 0 : adapterWatts)
     }
 
     /// In minus out. Positive means the battery is gaining charge. It can be negative
@@ -143,4 +162,78 @@ func batteryState(fromRegistry entry: [String: Any]) -> BatteryState? {
     let adapterWatts = onBattery ? 0 : telemetry.flatMap { number("SystemPowerIn", in: $0) }.map { $0 / 1000 }
     return BatteryState(onBattery: onBattery, percent: Int(percent), remainingWattHours: remaining * volts / 1000,
                         fullWattHours: full * volts / 1000, systemWatts: systemWatts, adapterWatts: adapterWatts)
+}
+
+/// Reads live power figures from the System Management Controller, which updates
+/// them about once a second. The key names are undocumented: `PSTR` is the whole
+/// machine's draw and `PDTR` is what the chargers deliver, both in watts.
+public final class SMCPowerReader {
+    /// The 80 byte structure the AppleSMC driver takes and returns.
+    private struct KeyData {
+        struct Version { var major: UInt8 = 0, minor: UInt8 = 0, build: UInt8 = 0, reserved: UInt8 = 0; var release: UInt16 = 0 }
+        struct LimitData { var version: UInt16 = 0, length: UInt16 = 0; var cpu: UInt32 = 0, gpu: UInt32 = 0, memory: UInt32 = 0 }
+        struct KeyInfo { var dataSize: UInt32 = 0, dataType: UInt32 = 0; var dataAttributes: UInt8 = 0 }
+        var key: UInt32 = 0
+        var version = Version()
+        var limits = LimitData()
+        var keyInfo = KeyInfo()
+        var padding: UInt16 = 0
+        var result: UInt8 = 0, status: UInt8 = 0, command: UInt8 = 0
+        var data32: UInt32 = 0
+        var bytes: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                    UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+            = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    }
+
+    private static let readKeyInfo: UInt8 = 9
+    private static let readBytes: UInt8 = 5
+    private static let float32 = code("flt ")
+
+    private var connection: io_connect_t = 0
+    private var sizes: [UInt32: UInt32] = [:]
+
+    /// Nil when the controller cannot be opened or does not have these keys.
+    public init?() {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+        guard IOServiceOpen(service, mach_task_self_, 0, &connection) == kIOReturnSuccess else { return nil }
+        guard read() != nil else {
+            IOServiceClose(connection)
+            return nil
+        }
+    }
+
+    deinit { IOServiceClose(connection) }
+
+    public func read() -> (systemWatts: Double, adapterWatts: Double)? {
+        guard let system = float("PSTR"), let adapter = float("PDTR"),
+              system.isFinite, adapter.isFinite, system > 0 else { return nil }
+        return (Double(system), Double(max(adapter, 0)))
+    }
+
+    private static func code(_ name: String) -> UInt32 {
+        name.utf8.reduce(0) { $0 << 8 | UInt32($1) }
+    }
+
+    private func call(_ input: inout KeyData) -> KeyData? {
+        var output = KeyData()
+        var size = MemoryLayout<KeyData>.size
+        let result = IOConnectCallStructMethod(connection, 2, &input, MemoryLayout<KeyData>.size, &output, &size)
+        return result == kIOReturnSuccess && output.result == 0 ? output : nil
+    }
+
+    private func float(_ name: String) -> Float? {
+        var input = KeyData()
+        input.key = Self.code(name)
+        if sizes[input.key] == nil {
+            input.command = Self.readKeyInfo
+            guard let info = call(&input), info.keyInfo.dataType == Self.float32 else { return nil }
+            sizes[input.key] = info.keyInfo.dataSize
+        }
+        input.keyInfo.dataSize = sizes[input.key] ?? 0
+        input.command = Self.readBytes
+        guard let output = call(&input) else { return nil }
+        return withUnsafeBytes(of: output.bytes) { $0.loadUnaligned(as: Float.self) }
+    }
 }

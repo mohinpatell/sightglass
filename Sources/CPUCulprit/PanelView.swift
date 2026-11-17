@@ -15,13 +15,18 @@ struct PanelView: View {
     /// Height of an expanded "Show all" list: 8 rows, fewer if the screen is short.
     @State private var listHeight: CGFloat = PanelView.fullListHeight
     @AppStorage("showAllEnergy") private var showAllEnergy = false
+    @AppStorage("showAllMemory") private var showAllMemory = false
+    /// The row whose quit button was clicked, while the confirmation is up.
+    @State private var quitTarget: AppUsage?
     @AppStorage("menuBarCPU") private var menuBarCPU = true
     @AppStorage("menuBarDraw") private var menuBarDraw = false
     @AppStorage("menuBarNet") private var menuBarNet = false
 
     private static let fullListHeight: CGFloat = 176
     private static let shortestListHeight: CGFloat = 88
-    private var listIsExpanded: Bool { mode == "energy" ? showAllEnergy : showAllApps }
+    private var listIsExpanded: Bool {
+        mode == "energy" ? showAllEnergy : mode == "memory" ? showAllMemory : showAllApps
+    }
     private var listCanShrink: Bool { listIsExpanded && listHeight > Self.shortestListHeight }
     @State private var opensAtLogin = SMAppService.mainApp.status == .enabled
     /// Remembered between opens, so the list stays the way it was left.
@@ -45,6 +50,21 @@ struct PanelView: View {
                 listHeight = max(Self.shortestListHeight, listHeight - (height - maxHeight))
             }
         }
+        .confirmationDialog(quitTarget.map { "Quit \($0.name)?" } ?? "", isPresented: Binding(
+            get: { quitTarget != nil }, set: { if !$0 { quitTarget = nil } }
+        ), presenting: quitTarget) { app in
+            Button("Quit") { quit(app, force: false) }
+            Button("Force Quit", role: .destructive) { quit(app, force: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Quit asks it to close, so it can save first. Force Quit stops it at once and unsaved work in it is lost.")
+        }
+        .onAppear {
+            // `-testQuitDialog YES` on the command line opens the confirmation for the
+            // busiest app, to check how it looks. Nothing is quit unless a button is clicked.
+            guard UserDefaults.standard.bool(forKey: "testQuitDialog") else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { quitTarget = monitor.latest?.apps.first(where: canQuit) }
+        }
     }
 
     private var measuredContent: some View {
@@ -58,11 +78,14 @@ struct PanelView: View {
             Picker("View", selection: $mode) {
                 Text("CPU").tag("cpu")
                 Text("Energy").tag("energy")
+                Text("Memory").tag("memory")
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             if mode == "energy" {
-                EnergyPanel(monitor: monitor, listHeight: listHeight)
+                EnergyPanel(monitor: monitor, listHeight: listHeight) { quitTarget = $0 }
+            } else if mode == "memory" {
+                MemoryPanel(monitor: monitor, listHeight: listHeight) { quitTarget = $0 }
             } else {
                 nowSection
                 chartSection
@@ -80,6 +103,18 @@ struct PanelView: View {
                     menuBarToggle("Battery gain/loss", help: "Watts going into or out of the battery", isOn: $menuBarNet)
                 }
                 .onChange(of: [menuBarCPU, menuBarDraw, menuBarNet]) { monitor.refreshHeadline() }
+                HStack {
+                    Text("Alerts").frame(width: 122, alignment: .leading)
+                    Menu(monitor.enabledAlerts.isEmpty ? "Off" : "\(monitor.enabledAlerts.count) on") {
+                        ForEach(AlertKind.allCases, id: \.self) { kind in
+                            Toggle(kind.title, isOn: Binding(
+                                get: { monitor.enabledAlerts.contains(kind) },
+                                set: { monitor.setAlert(kind, on: $0) }
+                            ))
+                        }
+                    }
+                }
+                .padding(.top, 4)
             }
             HStack {
                 Toggle("Open at login", isOn: $opensAtLogin)
@@ -162,7 +197,8 @@ struct PanelView: View {
     }
 
     private func appRow(_ app: AppUsage, scale: Double) -> some View {
-        UsageRow(name: app.name, fraction: app.cores / scale, value: percent(app.cores))
+        UsageRow(name: app.name, fraction: app.cores / scale, value: percent(app.cores),
+                 onQuit: canQuit(app) ? { quitTarget = app } : nil)
     }
 
     // MARK: Chart

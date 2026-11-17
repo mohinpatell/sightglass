@@ -9,11 +9,27 @@ struct UsageRow: View {
     let fraction: Double
     let value: String
     var detail: String?
+    /// When set, a quit button appears over the end of the name while the pointer is on the row.
+    var onQuit: (() -> Void)?
+    /// `-showQuitButtons YES` on the command line shows every quit button, for screenshots.
+    @State private var hovering = UserDefaults.standard.bool(forKey: "showQuitButtons")
 
     var body: some View {
         HStack(spacing: 8) {
             Text(name).lineLimit(1).truncationMode(.middle)
                 .frame(width: detail == nil ? 170 : 140, alignment: .leading)
+                .overlay(alignment: .trailing) {
+                    if hovering, let onQuit {
+                        Button(action: onQuit) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 6)
+                                .background(.regularMaterial, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Quit \(name)")
+                    }
+                }
             GeometryReader { geo in
                 RoundedRectangle(cornerRadius: 2)
                     .fill(.tint)
@@ -26,6 +42,8 @@ struct UsageRow: View {
                 Text(detail).monospacedDigit().foregroundStyle(.secondary).frame(width: 62, alignment: .trailing)
             }
         }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
     }
 }
 
@@ -74,7 +92,8 @@ struct StackedChart: View {
             .chartForegroundStyleScale(domain: series, range: colors)
             .chartLegend(.hidden)
             .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                // A label every 2 minutes: at most five, so they never run into each other.
+                AxisMarks(values: .stride(by: .minute, count: 2)) { _ in
                     AxisGridLine()
                     AxisValueLabel(format: .dateTime.hour().minute())
                 }

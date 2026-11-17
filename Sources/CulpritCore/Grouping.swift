@@ -47,12 +47,18 @@ public struct AppUsage: Equatable, Sendable, Identifiable {
     public let cores: Double
     /// CPU power billed to this app's processes. Zero when it could not be read.
     public let watts: Double
+    /// Memory footprint of this app's processes, in bytes. Zero when it could not be read.
+    public let memoryBytes: UInt64
+    /// This app's processes that belong to the current user, so can be asked to quit.
+    public let pids: [pid_t]
     public var id: String { name }
 
-    public init(name: String, cores: Double, watts: Double = 0) {
+    public init(name: String, cores: Double, watts: Double = 0, memoryBytes: UInt64 = 0, pids: [pid_t] = []) {
         self.name = name
         self.cores = cores
         self.watts = watts
+        self.memoryBytes = memoryBytes
+        self.pids = pids
     }
 }
 
@@ -64,14 +70,16 @@ public struct Snapshot: Sendable {
     public let apps: [AppUsage]
     public let power: ComponentPower?
     public let battery: BatteryState?
+    public let memory: MemoryState?
 
     public init(time: Date, totalCores: Double, apps: [AppUsage],
-                power: ComponentPower? = nil, battery: BatteryState? = nil) {
+                power: ComponentPower? = nil, battery: BatteryState? = nil, memory: MemoryState? = nil) {
         self.time = time
         self.totalCores = totalCores
         self.apps = apps
         self.power = power
         self.battery = battery
+        self.memory = memory
     }
 
     /// Whole machine draw. The battery controller's figure when there is one,
@@ -119,8 +127,12 @@ public let shortLivedName = "Short lived or kernel"
 /// measured, so the missing CPU may also be a system process.
 public let unidentifiedName = "Not yet identified"
 
-public func snapshot(from sample: RawSample, at time: Date,
-                     power: ComponentPower? = nil, battery: BatteryState? = nil) -> Snapshot {
+/// Apps holding less memory than this, and using no CPU, are left out of a snapshot.
+/// There are hundreds of tiny helpers and listing them would only add noise.
+public let smallestListedMemory: UInt64 = 10 << 20
+
+public func snapshot(from sample: RawSample, at time: Date, power: ComponentPower? = nil,
+                     battery: BatteryState? = nil, memory: MemoryState? = nil) -> Snapshot {
     var cores: [String: Double] = [:]
     var watts: [String: Double] = [:]
     for process in sample.processes {
@@ -136,7 +148,14 @@ public func snapshot(from sample: RawSample, at time: Date,
             watts[systemEnergyName] = unbilled
         }
     }
-    let apps = cores.map { AppUsage(name: $0.key, cores: $0.value, watts: watts[$0.key] ?? 0) }
-        .sorted { ($0.cores, $1.name) > ($1.cores, $0.name) }
-    return Snapshot(time: time, totalCores: sample.totalCores, apps: apps, power: power, battery: battery)
+    for (name, bytes) in sample.memory where bytes >= smallestListedMemory {
+        cores[name, default: 0] += 0
+    }
+    let apps = cores.map {
+        AppUsage(name: $0.key, cores: $0.value, watts: watts[$0.key] ?? 0,
+                 memoryBytes: sample.memory[$0.key] ?? 0, pids: sample.pids[$0.key] ?? [])
+    }
+    .sorted { ($0.cores, $1.name) > ($1.cores, $0.name) }
+    return Snapshot(time: time, totalCores: sample.totalCores, apps: apps, power: power,
+                    battery: battery, memory: memory)
 }

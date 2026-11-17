@@ -27,10 +27,13 @@ final class Monitor {
     private(set) var spikes: [Spike]
     private(set) var currentSpike: Spike?
     private(set) var ledger = EnergyLedger()
+    /// Which notifications the person asked for. None by default.
+    private(set) var enabledAlerts: Set<AlertKind>
 
     /// Called on the main queue after every sample with the new menu bar readings.
     @ObservationIgnored var onHeadline: (([MenuBarItem]) -> Void)?
 
+    @ObservationIgnored private var alertEngine = AlertEngine()
     @ObservationIgnored private var detector: SpikeDetector
     @ObservationIgnored private let store = SpikeStore()
     @ObservationIgnored private let timer: DispatchSourceTimer
@@ -51,6 +54,8 @@ final class Monitor {
         intervalOnPower = onPower
         intervalOnBattery = unplugged
         onBattery = startsOnBattery
+        let savedAlerts = UserDefaults.standard.stringArray(forKey: "enabledAlerts") ?? []
+        enabledAlerts = Set(savedAlerts.compactMap(AlertKind.init(rawValue:)))
         detector = SpikeDetector(totalThreshold: 0.4 * cpuCount, interval: seconds)
         spikes = store.load()
         timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "sampler", qos: .utility))
@@ -58,19 +63,28 @@ final class Monitor {
 
         let sampler = Sampler()
         let powerReader = PowerReader()
+        let livePower = SMCPowerReader()
         var battery: BatteryState?
         var batteryReadAt = Date.distantPast
         timer.setEventHandler { [weak self] in
             let now = Date()
-            // macOS refreshes the battery's power figure about every half minute, but
-            // being unplugged should be noticed within a few seconds.
-            if now.timeIntervalSince(batteryReadAt) >= 5 {
+            let live = livePower?.read()
+            // The battery registry is slow to read, so it is read every 5 seconds, or at
+            // once when the live charger figure disagrees with it about being plugged in.
+            let chargerSeen = live.map { $0.adapterWatts > 0.5 }
+            if now.timeIntervalSince(batteryReadAt) >= 5 || (chargerSeen != nil && chargerSeen == battery?.onBattery) {
                 battery = readBattery()
                 batteryReadAt = now
             }
+            // The registry's own power figures lag by up to half a minute. The live ones
+            // update every second, which matters when chargers are swapped.
+            var current = battery
+            if let live, let battery {
+                current = battery.replacingPower(systemWatts: live.systemWatts, adapterWatts: live.adapterWatts)
+            }
             let power = powerReader?.sample()
             guard let sample = sampler.sample() else { return }
-            let snap = snapshot(from: sample, at: now, power: power, battery: battery)
+            let snap = snapshot(from: sample, at: now, power: power, battery: current, memory: readMemory())
             DispatchQueue.main.async { self?.apply(snap) }
         }
         timer.resume()
@@ -80,6 +94,16 @@ final class Monitor {
         if forBattery { intervalOnBattery = seconds } else { intervalOnPower = seconds }
         UserDefaults.standard.set(seconds, forKey: forBattery ? "intervalOnBattery" : "intervalOnPower")
         if forBattery == onBattery { reschedule() }
+    }
+
+    func setAlert(_ kind: AlertKind, on: Bool) {
+        if on {
+            enabledAlerts.insert(kind)
+            Notifier.shared.requestPermission()
+        } else {
+            enabledAlerts.remove(kind)
+        }
+        UserDefaults.standard.set(enabledAlerts.map(\.rawValue).sorted(), forKey: "enabledAlerts")
     }
 
     private func reschedule() {
@@ -125,6 +149,8 @@ final class Monitor {
             try? store.save(spikes)
         }
         currentSpike = detector.current
+        alertEngine.enabled = enabledAlerts
+        for alert in alertEngine.ingest(snap) { Notifier.shared.post(alert) }
         onHeadline?(headline)
     }
 }
@@ -156,6 +182,13 @@ func watts(_ value: Double) -> String {
 func signedWatts(_ value: Double) -> String {
     if abs(value) < 0.05 { return "steady" }
     return (value > 0 ? "+" : "\u{2212}") + watts(abs(value))
+}
+
+let gigabyte = Double(1 << 30)
+
+func bytes(_ count: UInt64) -> String {
+    let value = Double(count)
+    return value >= gigabyte ? String(format: "%.1f GB", value / gigabyte) : String(format: "%.0f MB", value / Double(1 << 20))
 }
 
 func wattHours(joules: Double) -> String {

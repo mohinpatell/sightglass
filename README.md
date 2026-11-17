@@ -3,7 +3,7 @@
 A macOS menu bar app that names what is using your CPU and your battery. The menu
 bar shows total CPU use right now ("40.3%"), and can also show the watts the Mac is
 using and what the battery is gaining or losing, each with a small symbol in front.
-Click it for two views:
+Click it for three views:
 
 - **CPU:** the top apps, a stacked chart of the last 10 minutes, and a log of spikes
   with who caused each one. Every number is a share of the whole machine, so 100%
@@ -13,6 +13,16 @@ Click it for two views:
   else. Power coming in from the charger, power going out, and what the battery gains
   or loses as a result. The apps using the most CPU energy in real watts. A running
   total per app since you last plugged in or unplugged.
+- **Memory:** how much is in use and whether the Mac is under memory pressure or
+  swapping, the apps holding the most, and the apps that grew the most in the last
+  10 minutes.
+
+Point at any app in a list and a quit button appears. It asks before doing anything,
+and offers Quit (the app can save first) or Force Quit.
+
+Alerts are off until you pick some from the Alerts menu: an app hogging the CPU for
+5 minutes, losing charge while plugged in, memory under pressure, or under an hour
+of battery left. They arrive as silent notifications.
 
 ## Build and run
 
@@ -49,7 +59,9 @@ instead). The second draws the panel to a PNG after 8 seconds and quits.
 Settings can be overridden for one launch on the command line, which is how the panel
 is tested without clicking: `-panelMode energy`, `-showAllApps YES`,
 `-showAllEnergy YES`, `-intervalOnPower 5`, `-intervalOnBattery 10`, `-panelMaxHeight 600`,
-`-menuBarDraw YES`, `-menuBarNet YES`, `-menuBarCPU NO`.
+`-menuBarDraw YES`, `-menuBarNet YES`, `-menuBarCPU NO`, `-showAllMemory YES`,
+`-showQuitButtons YES` (every quit button visible), `-testQuitDialog YES` (opens the
+quit confirmation without quitting anything). `--test-alert` posts one notification.
 
 ## How it works
 
@@ -75,9 +87,16 @@ is tested without clicking: `-panelMode energy`, `-showAllApps YES`,
   efficiency core for the same CPU time.
 - **Power per component.** CPU, graphics and memory watts come from IOReport, a
   private Apple library that reads the chip's energy counters without root.
-- **Power in and out.** The battery controller reports charger input and whole machine
-  draw. The difference is what the battery gains or loses. It can be negative while
-  plugged in, when the Mac draws more than the charger supplies.
+- **Power in and out.** The System Management Controller reports charger input
+  (`PDTR`) and whole machine draw (`PSTR`) about once a second. The difference is what
+  the battery gains or loses. It can be negative while plugged in, when the Mac draws
+  more than the charger supplies. The battery controller reports the same two figures
+  but only refreshes them every half minute, so it is the fallback.
+- **Memory.** Per app it is the footprint from the same `proc_pid_rusage` call, the
+  figure Activity Monitor shows. The total is app memory plus wired plus compressed,
+  which is how Activity Monitor defines Memory Used.
+- **Alerts.** Each rule needs its condition to hold for a while and then stays quiet
+  for an hour, so a blip never notifies and a lasting problem does not nag.
 
 ## Known limits
 
@@ -92,8 +111,12 @@ is tested without clicking: `-panelMode energy`, `-showAllApps YES`,
   are shown as totals because nothing reports them per app.
 - CPU energy of processes owned by other users cannot be read. It shows as one
   measured total, "System and short lived", together with kernel and idle overhead.
-- The battery controller refreshes its power figures about every half minute, so
-  power in, power out and the screen figure move in steps.
+- Memory of processes owned by other users cannot be read per app. It is part of
+  the total.
+- Reading the chip's energy counters costs about 2 ms per sample, the largest single
+  cost after the process scan. Showing all three menu bar readings costs roughly half
+  as much again as showing CPU alone, because the item is redrawn on every display.
 - Time asleep is not counted in the totals since plugged in or unplugged, and those
   totals start over when the app restarts.
-- IOReport and the battery registry keys are undocumented and could change.
+- IOReport, the SMC key names and the battery registry keys are undocumented and
+  could change.

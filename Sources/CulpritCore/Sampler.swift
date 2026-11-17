@@ -31,11 +31,19 @@ public struct RawSample: Sendable {
     /// False when other users' processes were not measured for this sample, so any
     /// CPU missing from `processes` may be theirs.
     public let sawEveryProcess: Bool
+    /// Memory footprint in bytes per app, for every process of the current user,
+    /// whether or not it used CPU. Other users' processes cannot be read.
+    public let memory: [String: UInt64]
+    /// The current user's process ids per app. These are the ones that can be quit.
+    public let pids: [String: [pid_t]]
 
-    public init(totalCores: Double, processes: [ProcessUsage], sawEveryProcess: Bool) {
+    public init(totalCores: Double, processes: [ProcessUsage], sawEveryProcess: Bool,
+                memory: [String: UInt64] = [:], pids: [String: [pid_t]] = [:]) {
         self.totalCores = totalCores
         self.processes = processes
         self.sawEveryProcess = sawEveryProcess
+        self.memory = memory
+        self.pids = pids
     }
 }
 
@@ -49,11 +57,13 @@ public struct RawSample: Sendable {
 public final class Sampler {
     public var psThreshold = 0.25
 
-    /// One direct reading: cumulative CPU time and CPU energy, and the UUID of the
-    /// running executable, which changes when a process calls exec.
+    /// One direct reading: cumulative CPU time and CPU energy, the memory footprint
+    /// (the figure Activity Monitor calls Memory), and the UUID of the running
+    /// executable, which changes when a process calls exec.
     private struct Reading {
         let cpuNanos: UInt64
         let energyNanojoules: UInt64
+        let footprint: UInt64
         let image: UUID
     }
 
@@ -89,16 +99,19 @@ public final class Sampler {
 
         let interval = Double(now - before.time)
         var processes: [ProcessUsage] = []
+        var memory: [String: UInt64] = [:]
+        var pids: [String: [pid_t]] = [:]
         for (pid, reading) in cpu {
-            // A missing or larger previous value means a new process or a reused pid.
-            guard let old = before.cpu[pid], reading.cpuNanos >= old.cpuNanos else {
-                names[pid] = nil
-                continue
-            }
-            if reading.image != old.image { names[pid] = nil }
-            guard reading.cpuNanos > old.cpuNanos else { continue }
+            // A missing or larger previous value means a new process or a reused pid,
+            // and a new image means it called exec. Either way the cached name is stale.
+            let old = before.cpu[pid]
+            let sameProcess = old.map { reading.cpuNanos >= $0.cpuNanos } ?? false
+            if !sameProcess || reading.image != old?.image { names[pid] = nil }
             let name = names[pid] ?? resolveName(pid)
             names[pid] = name
+            memory[name.app, default: 0] += reading.footprint
+            pids[name.app, default: []].append(pid)
+            guard let old, sameProcess, reading.cpuNanos > old.cpuNanos else { continue }
             // Nanojoules over nanoseconds is watts.
             let watts = reading.energyNanojoules >= old.energyNanojoules
                 ? Double(reading.energyNanojoules - old.energyNanojoules) / interval : nil
@@ -133,7 +146,8 @@ public final class Sampler {
         }
 
         processes.sort { $0.cores > $1.cores }
-        return RawSample(totalCores: total, processes: processes, sawEveryProcess: sawEveryProcess)
+        return RawSample(totalCores: total, processes: processes, sawEveryProcess: sawEveryProcess,
+                         memory: memory, pids: pids)
     }
 
     private func allPids() -> [pid_t] {
@@ -154,7 +168,8 @@ public final class Sampler {
         guard result == 0 else { return nil }
         // These times are in Mach ticks, which are not nanoseconds on Apple Silicon.
         let nanos = (info.ri_user_time + info.ri_system_time) * UInt64(timebase.numer) / UInt64(timebase.denom)
-        return Reading(cpuNanos: nanos, energyNanojoules: info.ri_energy_nj, image: UUID(uuid: info.ri_uuid))
+        return Reading(cpuNanos: nanos, energyNanojoules: info.ri_energy_nj,
+                       footprint: info.ri_phys_footprint, image: UUID(uuid: info.ri_uuid))
     }
 
     private func resolveName(_ pid: pid_t) -> (path: String, app: String) {

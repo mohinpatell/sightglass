@@ -1,4 +1,5 @@
 import AppKit
+import CulpritCore
 import SwiftUI
 
 /// The menu bar item is plain AppKit. SwiftUI's MenuBarExtra cost about 17 ms of main
@@ -30,7 +31,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         popover.behavior = .transient
         popover.delegate = self
+        Notifier.shared.start()
         runDevFlags()
+    }
+
+    private let menuBarFont = NSFont.monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular)
+    /// Symbols are built once each. Rebuilding them every second cost more than drawing the text.
+    private var symbols: [String: NSAttributedString] = [:]
+
+    private func symbol(_ name: String) -> NSAttributedString? {
+        if let cached = symbols[name] { return cached }
+        let configuration = NSImage.SymbolConfiguration(pointSize: menuBarFont.pointSize - 2.5, weight: .medium)
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) else { return nil }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        // Sit the symbol on the text's optical center instead of its baseline.
+        attachment.bounds = CGRect(x: 0, y: (menuBarFont.capHeight - image.size.height) / 2,
+                                   width: image.size.width, height: image.size.height)
+        let text = NSAttributedString(attachment: attachment)
+        symbols[name] = text
+        return text
     }
 
     /// One reading is shown as a bare number. Two or more each get a small symbol in
@@ -42,25 +63,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.image = NSImage(systemSymbolName: "cpu", accessibilityDescription: "CPU Culprit")
             return
         }
-        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular)
-        let symbols = NSImage.SymbolConfiguration(pointSize: font.pointSize - 2.5, weight: .medium)
         let title = NSMutableAttributedString()
         for (index, item) in items.enumerated() {
             if index > 0 { title.append(NSAttributedString(string: "  ")) }
-            if items.count > 1,
-               let image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: nil)?
-                   .withSymbolConfiguration(symbols) {
-                let attachment = NSTextAttachment()
-                attachment.image = image
-                // Sit the symbol on the text's optical center instead of its baseline.
-                attachment.bounds = CGRect(x: 0, y: (font.capHeight - image.size.height) / 2,
-                                           width: image.size.width, height: image.size.height)
-                title.append(NSAttributedString(attachment: attachment))
+            if items.count > 1, let symbol = symbol(item.symbol) {
+                title.append(symbol)
                 title.append(NSAttributedString(string: "\u{2009}"))
             }
             title.append(NSAttributedString(string: item.text))
         }
-        title.addAttribute(.font, value: font, range: NSRange(location: 0, length: title.length))
+        title.addAttribute(.font, value: menuBarFont, range: NSRange(location: 0, length: title.length))
         button.image = nil
         button.attributedTitle = title
     }
@@ -94,9 +106,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// Dev aids, since the panel cannot be clicked from a script:
     /// `--show-panel` opens the panel 3 seconds after launch.
+    /// `--test-alert` posts one notification 3 seconds after launch.
     /// `--snapshot out.png` draws the panel to a file after 8 seconds and quits.
     private func runDevFlags() {
         let args = CommandLine.arguments
+        if args.contains("--test-alert") {
+            Notifier.shared.requestPermission()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                Notifier.shared.post(Alert(kind: .cpuHog, title: "Test alert from CPU Culprit",
+                                           body: "If you can read this, notifications are working."))
+            }
+        }
         if args.contains("--show-panel") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.showPanel() }
         }
