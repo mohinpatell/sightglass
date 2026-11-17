@@ -16,12 +16,15 @@ struct EnergyPanel: View {
                 nowSection(latest, power: power, draw: draw)
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Last 10 minutes").font(.headline)
-                    let data = chartPoints(history: monitor.history, bucketSeconds: max(5, monitor.interval),
-                                           other: "Everything else", value: { $0.watts }, total: { $0.drawWatts ?? 0 })
-                    StackedChart(series: data.apps, points: data.points, scale: 1, unit: " W")
+                    let data = energyChartPoints(history: monitor.history, bucketSeconds: max(5, monitor.interval))
+                    // Apps get the bright colors. The last three bands are the same every time:
+                    // other apps, the chip's graphics and memory, and hardware no app controls.
+                    let appColors: [Color] = [.blue, .orange, .green, .purple]
+                    StackedChart(series: data.apps, points: data.points, scale: 1, unit: " W",
+                                 colors: Array(appColors.prefix(data.apps.count - 3)) + [.pink, .teal, .gray.opacity(0.5)])
                 }
                 ledgerSection
-                Text("App figures are CPU energy only. Graphics, memory and the screen cannot be split by app.")
+                Text("App figures are CPU energy only. Screen and rest is hardware: the screen, anything plugged into the ports, Wi-Fi, storage and conversion losses.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -104,7 +107,7 @@ struct EnergyPanel: View {
             Spacer()
             flowColumn(steady ? "Battery" : net > 0 ? "Battery gaining" : "Battery losing",
                        signedWatts(net),
-                       note: steady ? "" : "\(net > 0 ? "full" : "empty") in about \(duration(hours * 3600))")
+                       note: steady ? "holding level" : "\(net > 0 ? "full" : "empty") in about \(duration(hours * 3600))")
                 .foregroundStyle(steady ? Color.primary : net > 0 ? Color.green : Color.orange)
         }
         .padding(.top, 4)

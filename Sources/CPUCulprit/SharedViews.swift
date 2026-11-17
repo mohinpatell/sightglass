@@ -77,9 +77,11 @@ struct StackedChart: View {
     /// Each point is multiplied by this for display, and `unit` follows the axis numbers.
     let scale: Double
     let unit: String
+    /// One color per series. Left out, the last series is gray and the rest get the usual colors.
+    var colors: [Color]?
 
     var body: some View {
-        let colors = seriesColors(count: series.count)
+        let colors = colors ?? seriesColors(count: series.count)
         VStack(alignment: .leading, spacing: 6) {
             Chart(points) { point in
                 AreaMark(

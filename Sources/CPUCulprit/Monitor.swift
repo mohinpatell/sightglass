@@ -195,9 +195,9 @@ func watts(_ value: Double) -> String {
     return String(format: value < 9.95 ? "%.1f W" : "%.0f W", value)
 }
 
-/// Battery gain or loss: "+12 W", "\u{2212}5.8 W", or "steady" within 50 mW of zero.
+/// Battery gain or loss: "+12 W", "\u{2212}5.8 W", or "0 W" within 50 mW of zero.
 func signedWatts(_ value: Double) -> String {
-    if abs(value) < 0.05 { return "steady" }
+    if abs(value) < 0.05 { return "0 W" }
     return (value > 0 ? "+" : "\u{2212}") + watts(abs(value))
 }
 

@@ -107,3 +107,13 @@ private func energySnapshot(_ t: Double, onBattery: Bool, percent: Int = 80) -> 
     #expect(state.adapterWatts == 58.425)
     #expect(abs(try #require(state.netWatts) + 1.464) < 1e-9)
 }
+
+@Test func energyChartNamesEveryBandAndAddsUpToTheDraw() {
+    let history = [energySnapshot(100, onBattery: true), energySnapshot(101, onBattery: true)]
+    let (bands, points) = energyChartPoints(history: history, topApps: 1)
+    #expect(bands == ["Brave Browser", otherAppsName, chipName, restName])
+    // 4 W for Brave, 2 W of other CPU energy, 3 W of graphics and memory, 11 W of hardware.
+    #expect(points.map(\.cores) == [4, 2, 3, 11])
+    #expect(points.map(\.cores).reduce(0, +) == 20)
+}
+
