@@ -40,7 +40,7 @@ struct PanelView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
-                    Text(percent(latest.totalCores))
+                    Text(totalPercent(latest.totalCores))
                         .font(.headline)
                         .monospacedDigit()
                 }

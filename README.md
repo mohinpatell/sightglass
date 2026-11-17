@@ -1,7 +1,7 @@
 # CPU Culprit
 
 A macOS menu bar app that names what is using your CPU. The menu bar shows total
-CPU use right now ("40%"). Click it and the panel shows the top five apps,
+CPU use right now ("40.3%"). Click it and the panel shows the top five apps,
 a stacked chart of the last 10 minutes, and a log of spikes with who caused each one.
 
 Every number is a share of the whole machine, so 100% means all cores are busy.

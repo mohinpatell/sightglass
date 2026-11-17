@@ -34,10 +34,9 @@ final class Monitor {
         timer.resume()
     }
 
-    /// Menu bar text: whole machine CPU use as a whole number, nil before the first sample.
+    /// Menu bar text: whole machine CPU use, nil before the first sample.
     var headline: String? {
-        guard let latest else { return nil }
-        return "\(Int((latest.totalCores / cpuCount * 100).rounded()))%"
+        latest.map { totalPercent($0.totalCores) }
     }
 
     private func apply(_ snap: Snapshot) {
@@ -54,6 +53,11 @@ final class Monitor {
 }
 
 let cpuCount = Double(ProcessInfo.processInfo.activeProcessorCount)
+
+/// The machine total always keeps one decimal, in the menu bar and the panel header.
+func totalPercent(_ cores: Double) -> String {
+    String(format: "%.1f%%", cores / cpuCount * 100)
+}
 
 /// Share of the whole machine, so every number in the panel is out of 100.
 /// On 12 cores, 2.4 cores reads as "20%". Small shares keep one decimal.
