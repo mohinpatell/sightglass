@@ -1,10 +1,11 @@
 # CPU Culprit
 
-A macOS menu bar app that names what is using your CPU. The menu bar shows the
-busiest app right now ("Python train.py 380%"). The panel shows the top five apps,
+A macOS menu bar app that names what is using your CPU. The menu bar shows total
+CPU use right now ("40%"). Click it and the panel shows the top five apps,
 a stacked chart of the last 10 minutes, and a log of spikes with who caused each one.
 
-100% means one full core, the same scale Activity Monitor uses.
+Every number is a share of the whole machine, so 100% means all cores are busy.
+The panel header also shows the per core figure it comes from ("475% of 1200%").
 
 ## Build and run
 

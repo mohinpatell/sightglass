@@ -36,12 +36,11 @@ struct PanelView: View {
                 Spacer()
                 if let latest = monitor.latest {
                     // Whole machine out of 100, with the per core figures it comes from beside it.
-                    let cpus = ProcessInfo.processInfo.activeProcessorCount
-                    Text(verbatim: "\(percent(latest.totalCores)) of \(cpus * 100)%")
+                    Text(verbatim: "\(Int((latest.totalCores * 100).rounded()))% of \(Int(cpuCount) * 100)%")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
-                    Text(percent(latest.totalCores / Double(cpus)))
+                    Text(percent(latest.totalCores))
                         .font(.headline)
                         .monospacedDigit()
                 }
@@ -77,7 +76,7 @@ struct PanelView: View {
             Chart(data.points) { point in
                 AreaMark(
                     x: .value("Time", point.time),
-                    y: .value("CPU", point.cores * 100),
+                    y: .value("CPU", point.cores / cpuCount * 100),
                     stacking: .standard
                 )
                 .foregroundStyle(by: .value("App", point.app))

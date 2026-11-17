@@ -21,8 +21,7 @@ final class Monitor {
     @ObservationIgnored private let timer: DispatchSourceTimer
 
     init() {
-        let cpus = Double(ProcessInfo.processInfo.activeProcessorCount)
-        detector = SpikeDetector(totalThreshold: 0.4 * cpus)
+        detector = SpikeDetector(totalThreshold: 0.4 * cpuCount)
         spikes = store.load()
         timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "sampler", qos: .utility))
         timer.schedule(deadline: .now(), repeating: 1.0, leeway: .milliseconds(100))
@@ -35,10 +34,10 @@ final class Monitor {
         timer.resume()
     }
 
-    /// Menu bar text: the busiest app, once it uses at least half a core.
+    /// Menu bar text: whole machine CPU use as a whole number, nil before the first sample.
     var headline: String? {
-        guard let top = latest?.apps.first, top.cores >= 0.5 else { return nil }
-        return "\(top.name.prefix(24)) \(percent(top.cores))"
+        guard let latest else { return nil }
+        return "\(Int((latest.totalCores / cpuCount * 100).rounded()))%"
     }
 
     private func apply(_ snap: Snapshot) {
@@ -54,7 +53,11 @@ final class Monitor {
     }
 }
 
-/// 2.12 cores reads as "212%", the same scale Activity Monitor uses.
+let cpuCount = Double(ProcessInfo.processInfo.activeProcessorCount)
+
+/// Share of the whole machine, so every number in the panel is out of 100.
+/// On 12 cores, 2.4 cores reads as "20%". Small shares keep one decimal.
 func percent(_ cores: Double) -> String {
-    "\(Int((cores * 100).rounded()))%"
+    let share = cores / cpuCount * 100
+    return share < 9.95 ? String(format: "%.1f%%", share) : "\(Int(share.rounded()))%"
 }
