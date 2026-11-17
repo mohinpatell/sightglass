@@ -5,7 +5,7 @@ let package = Package(
     name: "cpu-culprit",
     platforms: [.macOS(.v14)],
     targets: [
-        .target(name: "CulpritCore"),
+        .target(name: "CulpritCore", linkerSettings: [.linkedLibrary("IOReport")]),
         .executableTarget(name: "culprit", dependencies: ["CulpritCore"]),
         .executableTarget(name: "CPUCulprit", dependencies: ["CulpritCore"]),
         .testTarget(name: "CulpritCoreTests", dependencies: ["CulpritCore"]),

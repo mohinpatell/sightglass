@@ -22,5 +22,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+# The repo may sit in an iCloud synced folder, which tags new files with extended
+# attributes that codesign refuses to sign over.
+/usr/bin/xattr -cr "$APP"
 codesign --force --sign - "$APP"
 echo "Built $APP"

@@ -1,27 +1,74 @@
-import Charts
 import CulpritCore
 import ServiceManagement
 import SwiftUI
 
+private struct HeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct PanelView: View {
     let monitor: Monitor
+    /// Tallest the panel may be, normally the height of the screen it opens on.
+    var maxHeight: CGFloat = .infinity
+    @State private var contentHeight: CGFloat = 0
+    /// Height of an expanded "Show all" list: 8 rows, fewer if the screen is short.
+    @State private var listHeight: CGFloat = PanelView.fullListHeight
+    @AppStorage("showAllEnergy") private var showAllEnergy = false
+
+    private static let fullListHeight: CGFloat = 176
+    private static let shortestListHeight: CGFloat = 88
+    private var listIsExpanded: Bool { mode == "energy" ? showAllEnergy : showAllApps }
+    private var listCanShrink: Bool { listIsExpanded && listHeight > Self.shortestListHeight }
     @State private var opensAtLogin = SMAppService.mainApp.status == .enabled
     /// Remembered between opens, so the list stays the way it was left.
     @AppStorage("showAllApps") private var showAllApps = false
+    @AppStorage("panelMode") private var mode = "cpu"
 
+    /// A popover taller than the screen gets pushed sideways and bent out of shape by
+    /// macOS. So when the content is too tall, the expanded list gives up rows first.
+    /// Only if that is not enough does the whole panel scroll, at exactly `maxHeight`.
     var body: some View {
+        Group {
+            if contentHeight > maxHeight && !listCanShrink {
+                ScrollView { measuredContent }.frame(width: 360, height: maxHeight)
+            } else {
+                measuredContent
+            }
+        }
+        .onPreferenceChange(HeightKey.self) { height in
+            contentHeight = height
+            if height > maxHeight && listCanShrink {
+                listHeight = max(Self.shortestListHeight, listHeight - (height - maxHeight))
+            }
+        }
+    }
+
+    private var measuredContent: some View {
+        content.background(GeometryReader { geo in
+            Color.clear.preference(key: HeightKey.self, value: geo.size.height)
+        })
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 14) {
-            nowSection
-            chartSection
-            spikeSection
+            Picker("View", selection: $mode) {
+                Text("CPU").tag("cpu")
+                Text("Energy").tag("energy")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            if mode == "energy" {
+                EnergyPanel(monitor: monitor, listHeight: listHeight)
+            } else {
+                nowSection
+                chartSection
+                spikeSection
+            }
             Divider()
-            HStack {
-                Text("Update every")
-                Picker("Update every", selection: Binding(get: { monitor.interval }, set: { monitor.setInterval($0) })) {
-                    ForEach(Monitor.intervalChoices, id: \.self) { Text("\(Int($0))s").tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+            VStack(alignment: .leading, spacing: 6) {
+                intervalRow("Update on power", onBattery: false)
+                intervalRow("Update on battery", onBattery: true)
             }
             HStack {
                 Toggle("Open at login", isOn: $opensAtLogin)
@@ -35,6 +82,23 @@ struct PanelView: View {
         }
         .padding(14)
         .frame(width: 360)
+    }
+
+    /// The row for the power source in use right now is shown in bold.
+    private func intervalRow(_ title: String, onBattery: Bool) -> some View {
+        HStack {
+            Text(title)
+                .fontWeight(monitor.onBattery == onBattery ? .semibold : .regular)
+                .frame(width: 122, alignment: .leading)
+            Picker(title, selection: Binding(
+                get: { onBattery ? monitor.intervalOnBattery : monitor.intervalOnPower },
+                set: { monitor.setInterval($0, onBattery: onBattery) }
+            )) {
+                ForEach(Monitor.intervalChoices, id: \.self) { Text("\(Int($0))s").tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
     }
 
     // MARK: Now
@@ -64,7 +128,7 @@ struct PanelView: View {
                         ForEach(all) { appRow($0, scale: scale) }
                     }
                 }
-                .frame(height: 220)
+                .frame(height: listHeight)
             } else {
                 ForEach(all.prefix(5)) { appRow($0, scale: scale) }
             }
@@ -78,66 +142,17 @@ struct PanelView: View {
     }
 
     private func appRow(_ app: AppUsage, scale: Double) -> some View {
-        HStack(spacing: 8) {
-            Text(app.name).lineLimit(1).truncationMode(.middle).frame(width: 170, alignment: .leading)
-            GeometryReader { geo in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(.tint)
-                    .frame(width: geo.size.width * app.cores / scale)
-                    .frame(maxHeight: .infinity, alignment: .center)
-            }
-            .frame(height: 6)
-            Text(percent(app.cores)).monospacedDigit().frame(width: 52, alignment: .trailing)
-        }
+        UsageRow(name: app.name, fraction: app.cores / scale, value: percent(app.cores))
     }
 
     // MARK: Chart
 
     private var chartSection: some View {
         let data = chartPoints(history: monitor.history, bucketSeconds: max(5, monitor.interval))
-        let colors = Self.palette(count: data.apps.count)
         return VStack(alignment: .leading, spacing: 6) {
             Text("Last 10 minutes").font(.headline)
-            Chart(data.points) { point in
-                AreaMark(
-                    x: .value("Time", point.time),
-                    y: .value("CPU", point.cores / cpuCount * 100),
-                    stacking: .standard
-                )
-                .foregroundStyle(by: .value("App", point.app))
-            }
-            .chartForegroundStyleScale(domain: data.apps, range: colors)
-            .chartLegend(.hidden)
-            .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                    AxisGridLine()
-                    AxisValueLabel(format: .dateTime.hour().minute())
-                }
-            }
-            .chartYAxis {
-                AxisMarks { value in
-                    AxisGridLine()
-                    AxisValueLabel { if let v = value.as(Double.self) { Text(verbatim: "\(Int(v))%") } }
-                }
-            }
-            .frame(height: 150)
-            // The built in legend clips long names, so draw one that truncates instead.
-            LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
-                      alignment: .leading, spacing: 3) {
-                ForEach(Array(zip(data.apps, colors)), id: \.0) { name, color in
-                    HStack(spacing: 5) {
-                        Circle().fill(color).frame(width: 8, height: 8)
-                        Text(name).font(.caption).lineLimit(1)
-                    }
-                }
-            }
+            StackedChart(series: data.apps, points: data.points, scale: 100 / cpuCount, unit: "%")
         }
-    }
-
-    /// One color per named app, with gray kept for the trailing "Other" series.
-    private static func palette(count: Int) -> [Color] {
-        let colors: [Color] = [.blue, .orange, .green, .purple, .pink]
-        return Array(colors.prefix(max(count - 1, 0))) + [.gray.opacity(0.5)]
     }
 
     // MARK: Spikes
@@ -148,7 +163,7 @@ struct PanelView: View {
             if let current = monitor.currentSpike {
                 spikeRow(current, ongoing: true)
             }
-            ForEach(monitor.spikes.prefix(6)) { spike in
+            ForEach(monitor.spikes.prefix(5)) { spike in
                 spikeRow(spike, ongoing: false)
             }
             if monitor.currentSpike == nil && monitor.spikes.isEmpty {

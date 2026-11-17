@@ -10,12 +10,16 @@ public struct ProcessUsage: Equatable, Sendable {
     public let app: String
     /// 1.0 means one full core for the whole interval.
     public let cores: Double
+    /// CPU power the kernel billed to this process. Nil for other users' processes,
+    /// whose energy counters cannot be read without root.
+    public let watts: Double?
 
-    public init(pid: pid_t, path: String, app: String, cores: Double) {
+    public init(pid: pid_t, path: String, app: String, cores: Double, watts: Double? = nil) {
         self.pid = pid
         self.path = path
         self.app = app
         self.cores = cores
+        self.watts = watts
     }
 }
 
@@ -45,10 +49,11 @@ public struct RawSample: Sendable {
 public final class Sampler {
     public var psThreshold = 0.25
 
-    /// One direct reading: cumulative CPU time, and the UUID of the running
-    /// executable, which changes when a process calls exec.
+    /// One direct reading: cumulative CPU time and CPU energy, and the UUID of the
+    /// running executable, which changes when a process calls exec.
     private struct Reading {
         let cpuNanos: UInt64
+        let energyNanojoules: UInt64
         let image: UUID
     }
 
@@ -94,8 +99,11 @@ public final class Sampler {
             guard reading.cpuNanos > old.cpuNanos else { continue }
             let name = names[pid] ?? resolveName(pid)
             names[pid] = name
+            // Nanojoules over nanoseconds is watts.
+            let watts = reading.energyNanojoules >= old.energyNanojoules
+                ? Double(reading.energyNanojoules - old.energyNanojoules) / interval : nil
             processes.append(ProcessUsage(pid: pid, path: name.path, app: name.app,
-                                          cores: Double(reading.cpuNanos - old.cpuNanos) / interval))
+                                          cores: Double(reading.cpuNanos - old.cpuNanos) / interval, watts: watts))
         }
         // Entries for dead pids are harmless but would pile up over weeks.
         if names.count > 2 * cpu.count + 100 { names = names.filter { cpu[$0.key] != nil } }
@@ -136,17 +144,17 @@ public final class Sampler {
     }
 
     private func nativeCPU(_ pid: pid_t) -> Reading? {
-        // V0 is the cheapest flavor and already has the times and the image UUID.
-        var info = rusage_info_v0()
+        // V6 is the first flavor with the energy counter.
+        var info = rusage_info_v6()
         let result = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
-                proc_pid_rusage(pid, RUSAGE_INFO_V0, $0)
+                proc_pid_rusage(pid, RUSAGE_INFO_V6, $0)
             }
         }
         guard result == 0 else { return nil }
         // These times are in Mach ticks, which are not nanoseconds on Apple Silicon.
         let nanos = (info.ri_user_time + info.ri_system_time) * UInt64(timebase.numer) / UInt64(timebase.denom)
-        return Reading(cpuNanos: nanos, image: UUID(uuid: info.ri_uuid))
+        return Reading(cpuNanos: nanos, energyNanojoules: info.ri_energy_nj, image: UUID(uuid: info.ri_uuid))
     }
 
     private func resolveName(_ pid: pid_t) -> (path: String, app: String) {

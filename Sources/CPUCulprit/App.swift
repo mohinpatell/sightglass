@@ -57,7 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func showPanel() {
         guard let button = statusItem.button else { return }
-        let controller = NSHostingController(rootView: PanelView(monitor: monitor))
+        // Leave room for the menu bar and the popover's arrow.
+        // `-panelMaxHeight 600` on the command line forces a short panel for testing.
+        let forced = UserDefaults.standard.double(forKey: "panelMaxHeight")
+        let limit = forced > 0 ? forced : (button.window?.screen?.visibleFrame.height ?? 800) - 30
+        let controller = NSHostingController(rootView: PanelView(monitor: monitor, maxHeight: limit))
         controller.sizingOptions = .preferredContentSize
         popover.contentViewController = controller
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)

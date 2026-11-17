@@ -9,14 +9,18 @@ final class Monitor {
     static let historySeconds: TimeInterval = 600
     static let intervalChoices: [TimeInterval] = [1, 2, 5, 10]
 
-    /// Seconds between samples. Each sample is an average over this long, so a longer
-    /// interval gives a calmer number and costs less energy.
-    private(set) var interval: TimeInterval
+    /// Seconds between samples while plugged in, and while on battery. Each sample is
+    /// an average over the interval, so a longer one gives a calmer number and costs
+    /// less energy, which only matters on battery.
+    private(set) var intervalOnPower: TimeInterval
+    private(set) var intervalOnBattery: TimeInterval
+    private(set) var onBattery: Bool
 
     private(set) var latest: Snapshot?
     private(set) var history: [Snapshot] = []
     private(set) var spikes: [Spike]
     private(set) var currentSpike: Spike?
+    private(set) var ledger = EnergyLedger()
 
     /// Called on the main queue after every sample with the new menu bar text.
     @ObservationIgnored var onHeadline: ((String?) -> Void)?
@@ -25,28 +29,55 @@ final class Monitor {
     @ObservationIgnored private let store = SpikeStore()
     @ObservationIgnored private let timer: DispatchSourceTimer
 
+    /// The interval in use right now.
+    var interval: TimeInterval { onBattery ? intervalOnBattery : intervalOnPower }
+
     init() {
-        let saved = UserDefaults.standard.double(forKey: "updateInterval")
-        let seconds = Self.intervalChoices.contains(saved) ? saved : 1
-        interval = seconds
+        func saved(_ key: String, fallback: TimeInterval) -> TimeInterval {
+            let value = UserDefaults.standard.double(forKey: key)
+            return Self.intervalChoices.contains(value) ? value : fallback
+        }
+        let onPower = saved("intervalOnPower", fallback: 1)
+        let unplugged = saved("intervalOnBattery", fallback: 5)
+        let startsOnBattery = readBattery()?.onBattery ?? false
+        let seconds = startsOnBattery ? unplugged : onPower
+        intervalOnPower = onPower
+        intervalOnBattery = unplugged
+        onBattery = startsOnBattery
         detector = SpikeDetector(totalThreshold: 0.4 * cpuCount, interval: seconds)
         spikes = store.load()
         timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "sampler", qos: .utility))
         timer.schedule(deadline: .now(), repeating: seconds, leeway: .milliseconds(100))
+
         let sampler = Sampler()
+        let powerReader = PowerReader()
+        var battery: BatteryState?
+        var batteryReadAt = Date.distantPast
         timer.setEventHandler { [weak self] in
+            let now = Date()
+            // macOS refreshes the battery's power figure about every half minute, but
+            // being unplugged should be noticed within a few seconds.
+            if now.timeIntervalSince(batteryReadAt) >= 5 {
+                battery = readBattery()
+                batteryReadAt = now
+            }
+            let power = powerReader?.sample()
             guard let sample = sampler.sample() else { return }
-            let snap = snapshot(from: sample, at: Date())
+            let snap = snapshot(from: sample, at: now, power: power, battery: battery)
             DispatchQueue.main.async { self?.apply(snap) }
         }
         timer.resume()
     }
 
-    func setInterval(_ seconds: TimeInterval) {
-        interval = seconds
-        detector.interval = seconds
-        UserDefaults.standard.set(seconds, forKey: "updateInterval")
-        timer.schedule(deadline: .now() + seconds, repeating: seconds, leeway: .milliseconds(100))
+    func setInterval(_ seconds: TimeInterval, onBattery forBattery: Bool) {
+        if forBattery { intervalOnBattery = seconds } else { intervalOnPower = seconds }
+        UserDefaults.standard.set(seconds, forKey: forBattery ? "intervalOnBattery" : "intervalOnPower")
+        if forBattery == onBattery { reschedule() }
+    }
+
+    private func reschedule() {
+        detector.interval = interval
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(100))
     }
 
     /// Menu bar text: whole machine CPU use, nil before the first sample.
@@ -55,9 +86,14 @@ final class Monitor {
     }
 
     private func apply(_ snap: Snapshot) {
+        if let unplugged = snap.battery?.onBattery, unplugged != onBattery {
+            onBattery = unplugged
+            reschedule()
+        }
         latest = snap
         history.append(snap)
         history.removeAll { snap.time.timeIntervalSince($0.time) > Self.historySeconds }
+        ledger.add(snap)
         if let finished = detector.ingest(snap) {
             spikes = SpikeStore.recent([finished] + spikes)
             try? store.save(spikes)
@@ -74,9 +110,23 @@ func totalPercent(_ cores: Double) -> String {
     String(format: "%.1f%%", cores / cpuCount * 100)
 }
 
-/// Share of the whole machine, so every number in the panel is out of 100.
-/// On 12 cores, 2.4 cores reads as "20%". Small shares keep one decimal.
+/// A fraction of some whole as a number out of 100. Small shares keep one decimal.
+func share(_ fraction: Double) -> String {
+    let value = fraction * 100
+    return value < 9.95 ? String(format: "%.1f%%", value) : "\(Int(value.rounded()))%"
+}
+
+/// Share of the whole machine. On 12 cores, 2.4 cores reads as "20%".
 func percent(_ cores: Double) -> String {
-    let share = cores / cpuCount * 100
-    return share < 9.95 ? String(format: "%.1f%%", share) : "\(Int(share.rounded()))%"
+    share(cores / cpuCount)
+}
+
+func watts(_ value: Double) -> String {
+    if value < 0.9995 { return "\(Int((value * 1000).rounded())) mW" }
+    return String(format: value < 9.95 ? "%.1f W" : "%.0f W", value)
+}
+
+func wattHours(joules: Double) -> String {
+    let value = joules / 3600
+    return String(format: value < 9.995 ? "%.2f Wh" : "%.1f Wh", value)
 }
