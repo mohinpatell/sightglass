@@ -1,4 +1,4 @@
-import CulpritCore
+import SightglassCore
 import SwiftUI
 
 /// The Memory side of the panel: what is holding memory now, over the last ten

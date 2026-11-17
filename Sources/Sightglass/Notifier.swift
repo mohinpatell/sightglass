@@ -1,4 +1,4 @@
-import CulpritCore
+import SightglassCore
 import UserNotifications
 
 /// Posts alerts as system notifications.

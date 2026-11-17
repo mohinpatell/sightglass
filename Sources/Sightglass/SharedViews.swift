@@ -1,5 +1,5 @@
 import Charts
-import CulpritCore
+import SightglassCore
 import SwiftUI
 
 /// One line of a usage list: name, a bar, the value, and an optional second figure.

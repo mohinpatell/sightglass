@@ -1,5 +1,5 @@
 import Testing
-@testable import CulpritCore
+@testable import SightglassCore
 
 @Test func parsesMinutesSecondsAndPathsWithSpaces() {
     let rows = parsePS("""

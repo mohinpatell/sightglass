@@ -118,10 +118,11 @@ public let restName = "Screen and rest"
 public let systemEnergyName = "System and short lived"
 
 /// Label for CPU the kernel counted but no measured process accounts for.
-/// Mostly that is work done by processes that started and exited between two
-/// samples, which is what a compiler or a shell script loop looks like. It also
-/// holds kernel_task, which neither `proc_pid_rusage` nor `ps` will report.
-public let shortLivedName = "Short lived or kernel"
+/// That is kernel_task, which neither `proc_pid_rusage` nor `ps` will report, plus
+/// short lived commands whose parent cannot be read (it belongs to another user) or
+/// never collected them. Short lived commands with a readable parent are charged
+/// to that parent instead, so this row is usually small.
+public let shortLivedName = "Kernel and system tasks"
 
 /// Label for the same gap on a sample where other users' processes were not
 /// measured, so the missing CPU may also be a system process.

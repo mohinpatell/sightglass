@@ -1,4 +1,4 @@
-import CulpritCore
+import SightglassCore
 import SwiftUI
 
 /// The alert settings, shown in place of the panel's usual content.

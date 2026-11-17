@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import CulpritCore
+@testable import SightglassCore
 
 private func battery(onBattery: Bool, percent: Int = 80, systemWatts: Double? = 20) -> BatteryState {
     BatteryState(onBattery: onBattery, percent: percent, remainingWattHours: 60, fullWattHours: 80,

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import CulpritCore
+@testable import SightglassCore
 
 @Test func helperRollsUpToOutermostApp() {
     let path = "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/142/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)"
@@ -41,8 +41,8 @@ import Testing
 
 @Test func interpretersAreNamedWithTheirScript() {
     let python = "/opt/homebrew/Cellar/python@3.12/3.12.7/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python"
-    #expect(appName(path: python, arguments: [python, "scripts/cer.py", "qwen17"]) == "Python cer.py")
-    #expect(appName(path: "/opt/homebrew/bin/node", arguments: ["node", "--no-warnings", "verify_shapes.mts", "x.json"]) == "node verify_shapes.mts")
+    #expect(appName(path: python, arguments: [python, "scripts/evaluate.py", "run1"]) == "Python evaluate.py")
+    #expect(appName(path: "/opt/homebrew/bin/node", arguments: ["node", "--no-warnings", "build.mts", "x.json"]) == "node build.mts")
     #expect(appName(path: "/usr/bin/python3", arguments: []) == "python3")
     #expect(appName(path: "/usr/bin/clang", arguments: ["clang", "main.c"]) == "clang")
 }
@@ -60,3 +60,40 @@ import Testing
     #expect(parseProcArgs(buffer) == ["python3", "a b.py"])
     #expect(parseProcArgs([1, 0]).isEmpty)
 }
+
+// MARK: Short lived children
+
+private let second: UInt64 = 1_000_000_000
+
+@Test func aChildThatCameAndWentBetweenSamplesIsAllNewWork() {
+    var ledger = ChildLedger()
+    #expect(ledger.newWork(parent: 10, childDelta: 300_000_000, now: second) == 300_000_000)
+}
+
+@Test func aChildSeenBeforeIsOnlyChargedForWhatItDidSinceThen() {
+    var ledger = ChildLedger()
+    // The child had been charged 5 s while it lived, then ran 0.3 s more and exited.
+    ledger.exited(parent: 10, alreadyCharged: 5 * second, now: 8 * second)
+    #expect(ledger.newWork(parent: 10, childDelta: 5 * second + 300_000_000, now: 8 * second) == 300_000_000)
+    // The debt is settled, so the next short lived child counts in full.
+    #expect(ledger.newWork(parent: 10, childDelta: 200_000_000, now: 9 * second) == 200_000_000)
+}
+
+@Test func aChildCollectedALittleLaterStillSettlesTheDebt() {
+    var ledger = ChildLedger()
+    ledger.exited(parent: 10, alreadyCharged: 5 * second, now: 8 * second)
+    // The parent has not collected it yet, so nothing shows up this sample.
+    #expect(ledger.newWork(parent: 10, childDelta: 0, now: 8 * second) == 0)
+    #expect(ledger.newWork(parent: 10, childDelta: 5 * second + 100_000_000, now: 10 * second) == 100_000_000)
+}
+
+@Test func aDebtThatIsNeverSettledExpires() {
+    var ledger = ChildLedger()
+    ledger.exited(parent: 10, alreadyCharged: 5 * second, now: 0)
+    // The parent never collected that child. Half a minute later its other work counts in full.
+    #expect(ledger.newWork(parent: 10, childDelta: 400_000_000, now: 30 * second) == 400_000_000)
+    // Another parent is never affected.
+    ledger.exited(parent: 10, alreadyCharged: 5 * second, now: 40 * second)
+    #expect(ledger.newWork(parent: 11, childDelta: 400_000_000, now: 40 * second) == 400_000_000)
+}
+

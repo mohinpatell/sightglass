@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import CulpritCore
+@testable import SightglassCore
 
 @Test func spikesSurviveASaveAndLoadAndOldOnesAreDropped() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: "culprit-test-\(UUID().uuidString)/spikes.json")

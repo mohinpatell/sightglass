@@ -1,5 +1,5 @@
 import AppKit
-import CulpritCore
+import SightglassCore
 
 /// Rows that are leftovers or system components, not something that can be quit.
 func canQuit(_ app: AppUsage) -> Bool {

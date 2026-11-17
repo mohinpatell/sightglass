@@ -1,4 +1,4 @@
-import CulpritCore
+import SightglassCore
 import Foundation
 import Observation
 
@@ -117,7 +117,7 @@ final class Monitor {
 
     func sendTestAlert() {
         Notifier.shared.requestPermission()
-        Notifier.shared.post(Alert(kind: .cpuHog, title: "Test alert from CPU Culprit",
+        Notifier.shared.post(Alert(kind: .cpuHog, title: "Test alert from Sightglass",
                                    body: "If you can read this, alerts are working."), sound: alertSettings.sound)
     }
 

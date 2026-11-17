@@ -1,4 +1,4 @@
-import CulpritCore
+import SightglassCore
 import ServiceManagement
 import SwiftUI
 

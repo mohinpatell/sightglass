@@ -62,6 +62,8 @@ public final class Sampler {
     /// executable, which changes when a process calls exec.
     private struct Reading {
         let cpuNanos: UInt64
+        /// CPU time of this process's children that have exited and been collected.
+        let childNanos: UInt64
         let energyNanojoules: UInt64
         let footprint: UInt64
         let image: UUID
@@ -70,7 +72,8 @@ public final class Sampler {
     private var previousCPU: [pid_t: Reading] = [:]
     /// Path and app name per pid. Looking these up costs more than the CPU readings
     /// themselves, so they are kept until the pid is reused or the process execs.
-    private var names: [pid_t: (path: String, app: String)] = [:]
+    private var names: [pid_t: (path: String, app: String, parent: pid_t)] = [:]
+    private var children = ChildLedger()
     private var previousTime: UInt64 = 0
     private var previousTicks: [UInt32] = []
     private var psCPU: [pid_t: UInt64] = [:]
@@ -101,6 +104,12 @@ public final class Sampler {
         var processes: [ProcessUsage] = []
         var memory: [String: UInt64] = [:]
         var pids: [String: [pid_t]] = [:]
+        // A process that is gone was charged for its CPU while it lived. Its parent is
+        // about to be credited with all of it again, so note what not to charge twice.
+        for (pid, old) in before.cpu where cpu[pid] == nil {
+            guard let parent = names[pid]?.parent else { continue }
+            children.exited(parent: parent, alreadyCharged: old.cpuNanos + old.childNanos, now: now)
+        }
         for (pid, reading) in cpu {
             // A missing or larger previous value means a new process or a reused pid,
             // and a new image means it called exec. Either way the cached name is stale.
@@ -111,12 +120,20 @@ public final class Sampler {
             names[pid] = name
             memory[name.app, default: 0] += reading.footprint
             pids[name.app, default: []].append(pid)
-            guard let old, sameProcess, reading.cpuNanos > old.cpuNanos else { continue }
+            guard let old, sameProcess else { continue }
+            // Commands that start and finish between two samples are never seen as
+            // processes. The kernel adds their CPU time to the parent that ran them,
+            // which is how a shell or an agent gets charged for what it spawned.
+            var used = reading.cpuNanos - old.cpuNanos
+            if reading.childNanos > old.childNanos {
+                used += children.newWork(parent: pid, childDelta: reading.childNanos - old.childNanos, now: now)
+            }
+            guard used > 0 else { continue }
             // Nanojoules over nanoseconds is watts.
             let watts = reading.energyNanojoules >= old.energyNanojoules
                 ? Double(reading.energyNanojoules - old.energyNanojoules) / interval : nil
             processes.append(ProcessUsage(pid: pid, path: name.path, app: name.app,
-                                          cores: Double(reading.cpuNanos - old.cpuNanos) / interval, watts: watts))
+                                          cores: Double(used) / interval, watts: watts))
         }
         // Entries for dead pids are harmless but would pile up over weeks.
         if names.count > 2 * cpu.count + 100 { names = names.filter { cpu[$0.key] != nil } }
@@ -167,17 +184,22 @@ public final class Sampler {
         }
         guard result == 0 else { return nil }
         // These times are in Mach ticks, which are not nanoseconds on Apple Silicon.
-        let nanos = (info.ri_user_time + info.ri_system_time) * UInt64(timebase.numer) / UInt64(timebase.denom)
-        return Reading(cpuNanos: nanos, energyNanojoules: info.ri_energy_nj,
+        let scale = { (ticks: UInt64) in ticks * UInt64(self.timebase.numer) / UInt64(self.timebase.denom) }
+        return Reading(cpuNanos: scale(info.ri_user_time + info.ri_system_time),
+                       childNanos: scale(info.ri_child_user_time + info.ri_child_system_time),
+                       energyNanojoules: info.ri_energy_nj,
                        footprint: info.ri_phys_footprint, image: UUID(uuid: info.ri_uuid))
     }
 
-    private func resolveName(_ pid: pid_t) -> (path: String, app: String) {
+    private func resolveName(_ pid: pid_t) -> (path: String, app: String, parent: pid_t) {
         let path = nativePath(pid) ?? nativeName(pid)
         // Only XPC services need the extra lookup, everything else names itself.
         let responsible = path.contains(".xpc/") ? nativePath(responsiblePid(pid)) : nil
         let arguments = isInterpreter(path: path) ? nativeArguments(pid) : []
-        return (path, appName(path: path, responsiblePath: responsible, arguments: arguments))
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        let parent = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size ? pid_t(info.pbi_ppid) : 0
+        return (path, appName(path: path, responsiblePath: responsible, arguments: arguments), parent)
     }
 
     private func nativePath(_ pid: pid_t) -> String? {
@@ -269,3 +291,35 @@ public func parseProcArgs(_ buffer: [UInt8]) -> [String] {
     }
     return arguments
 }
+
+/// Works out how much of a parent's child time is CPU nobody has been charged for.
+///
+/// When a child exits, the kernel adds the child's whole lifetime of CPU to its
+/// parent's child time. A child that lived across several samples was already
+/// charged for most of that as its own process, so that part is owed back.
+struct ChildLedger {
+    /// A parent that never collects a child would otherwise keep the debt forever.
+    static let expiry: UInt64 = 10_000_000_000
+
+    private var owed: [pid_t: (nanos: UInt64, at: UInt64)] = [:]
+
+    /// A child of `parent` is gone, having already been charged `alreadyCharged`.
+    mutating func exited(parent: pid_t, alreadyCharged: UInt64, now: UInt64) {
+        owed[parent] = (outstanding(parent, now: now) + alreadyCharged, now)
+        if owed.count > 512 { owed = owed.filter { now - $0.value.at <= Self.expiry } }
+    }
+
+    /// The parent's child time grew by `childDelta`. Returns the part that is new.
+    mutating func newWork(parent: pid_t, childDelta: UInt64, now: UInt64) -> UInt64 {
+        let debt = outstanding(parent, now: now)
+        let repaid = min(debt, childDelta)
+        owed[parent] = debt > repaid ? (debt - repaid, owed[parent]?.at ?? now) : nil
+        return childDelta - repaid
+    }
+
+    private func outstanding(_ parent: pid_t, now: UInt64) -> UInt64 {
+        guard let debt = owed[parent], now - debt.at <= Self.expiry else { return 0 }
+        return debt.nanos
+    }
+}
+

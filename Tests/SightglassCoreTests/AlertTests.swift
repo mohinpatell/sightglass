@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import CulpritCore
+@testable import SightglassCore
 
 private func snap(_ t: Double, apps: [AppUsage] = [], battery: BatteryState? = nil, memory: MemoryState? = nil) -> Snapshot {
     Snapshot(time: Date(timeIntervalSince1970: t), totalCores: apps.reduce(0) { $0 + $1.cores }, apps: apps,
@@ -72,12 +72,12 @@ private func feed(_ engine: inout AlertEngine, from start: Double = 0, to end: D
     var engine = AlertEngine()
     engine.settings.enabled = [.losingWhilePlugged]
     let losing = { (t: Double) in
-        snap(t, apps: [AppUsage(name: "Python synth_cosy.py", cores: 2, watts: 9)], battery: battery(onBattery: false, draw: 72, adapter: 58))
+        snap(t, apps: [AppUsage(name: "Python train.py", cores: 2, watts: 9)], battery: battery(onBattery: false, draw: 72, adapter: 58))
     }
     #expect(feed(&engine, to: 115, losing).isEmpty)
     let alerts = feed(&engine, from: 120, to: 600, losing)
     #expect(alerts.count == 1)
-    #expect(alerts[0].body == "The charger supplies 58 W and the Mac is using 72 W, so the battery is losing 14 W. Biggest user: Python synth_cosy.py at 9.0 W.")
+    #expect(alerts[0].body == "The charger supplies 58 W and the Mac is using 72 W, so the battery is losing 14 W. Biggest user: Python train.py at 9.0 W.")
 }
 
 @Test func gainingChargeOrBeingOnBatteryIsNotLosingWhilePlugged() {

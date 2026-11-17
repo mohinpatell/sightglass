@@ -1,5 +1,5 @@
 import AppKit
-import CulpritCore
+import SightglassCore
 import SwiftUI
 
 /// The menu bar item is plain AppKit. SwiftUI's MenuBarExtra cost about 17 ms of main
@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         guard !items.isEmpty else {
             button.title = ""
-            button.image = NSImage(systemSymbolName: "cpu", accessibilityDescription: "CPU Culprit")
+            button.image = NSImage(systemSymbolName: "cpu", accessibilityDescription: "Sightglass")
             return
         }
         let title = NSMutableAttributedString()

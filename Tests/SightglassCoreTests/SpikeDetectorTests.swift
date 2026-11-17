@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import CulpritCore
+@testable import SightglassCore
 
 /// Feeds one snapshot per second. Each entry is the per app cores for that second;
 /// the machine total is their sum.

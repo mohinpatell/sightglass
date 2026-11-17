@@ -6,7 +6,7 @@ public struct SpikeStore {
 
     public let url: URL
 
-    public init(url: URL = URL.applicationSupportDirectory.appending(path: "CPU Culprit/spikes.json")) {
+    public init(url: URL = URL.applicationSupportDirectory.appending(path: "Sightglass/spikes.json")) {
         self.url = url
     }
 

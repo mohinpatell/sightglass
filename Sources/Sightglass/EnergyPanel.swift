@@ -1,4 +1,4 @@
-import CulpritCore
+import SightglassCore
 import SwiftUI
 
 /// The Energy side of the panel: what is drawing power now, over the last ten

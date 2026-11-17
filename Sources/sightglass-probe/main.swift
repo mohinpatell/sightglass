@@ -1,8 +1,8 @@
-import CulpritCore
+import SightglassCore
 import Foundation
 
-// Usage: culprit [samples]            Prints the busiest apps once a second.
-//        culprit --energy [samples]   Prints power readings and the apps using the most energy.
+// Usage: sightglass-probe [samples]            Prints the busiest apps once a second.
+//        sightglass-probe --energy [samples]   Prints power readings and the apps using the most energy.
 var arguments = Array(CommandLine.arguments.dropFirst())
 let energy = arguments.first == "--energy"
 if energy { arguments.removeFirst() }

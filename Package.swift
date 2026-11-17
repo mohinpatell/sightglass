@@ -2,13 +2,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "cpu-culprit",
+    name: "sightglass",
     platforms: [.macOS(.v14)],
     targets: [
-        .target(name: "CulpritCore", linkerSettings: [.linkedLibrary("IOReport")]),
-        .executableTarget(name: "culprit", dependencies: ["CulpritCore"]),
-        .executableTarget(name: "CPUCulprit", dependencies: ["CulpritCore"]),
-        .testTarget(name: "CulpritCoreTests", dependencies: ["CulpritCore"]),
+        .target(name: "SightglassCore", linkerSettings: [.linkedLibrary("IOReport")]),
+        .executableTarget(name: "sightglass-probe", dependencies: ["SightglassCore"]),
+        .executableTarget(name: "Sightglass", dependencies: ["SightglassCore"]),
+        .testTarget(name: "SightglassCoreTests", dependencies: ["SightglassCore"]),
     ],
     swiftLanguageModes: [.v5]
 )
