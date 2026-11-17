@@ -16,6 +16,14 @@ struct PanelView: View {
             spikeSection
             Divider()
             HStack {
+                Text("Update every")
+                Picker("Update every", selection: Binding(get: { monitor.interval }, set: { monitor.setInterval($0) })) {
+                    ForEach(Monitor.intervalChoices, id: \.self) { Text("\(Int($0))s").tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+            HStack {
                 Toggle("Open at login", isOn: $opensAtLogin)
                     .onChange(of: opensAtLogin) { _, on in
                         try? on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
@@ -86,7 +94,7 @@ struct PanelView: View {
     // MARK: Chart
 
     private var chartSection: some View {
-        let data = chartPoints(history: monitor.history)
+        let data = chartPoints(history: monitor.history, bucketSeconds: max(5, monitor.interval))
         let colors = Self.palette(count: data.apps.count)
         return VStack(alignment: .leading, spacing: 6) {
             Text("Last 10 minutes").font(.headline)

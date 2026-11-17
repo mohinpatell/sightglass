@@ -14,18 +14,26 @@ public struct Spike: Codable, Equatable, Sendable, Identifiable {
     public var id: Date { start }
 }
 
-/// Turns a stream of one second snapshots into spikes.
+/// Turns a stream of snapshots, `interval` seconds apart, into spikes.
 ///
-/// A spike opens when the whole machine stays over `totalThreshold` for 3 samples,
-/// or one app stays over `appThreshold` for 5. It closes after 3 calm samples in a
-/// row, so a short dip does not split one spike into two.
+/// A spike opens when the whole machine stays over `totalThreshold` for 3 seconds,
+/// or one app stays over `appThreshold` for 5. It closes after 3 calm seconds in a
+/// row, so a short dip does not split one spike into two. Each snapshot is an
+/// average over its interval, so at a 5 second interval one hot snapshot is enough.
 public struct SpikeDetector {
     public var totalThreshold: Double
     public var appThreshold: Double
 
-    private let totalHold = 3
-    private let appHold = 5
-    private let cooldown = 3
+    /// Seconds between snapshots.
+    public var interval: TimeInterval
+
+    private var totalHold: Int { samples(covering: 3) }
+    private var appHold: Int { samples(covering: 5) }
+    private var cooldown: Int { samples(covering: 3) }
+
+    private func samples(covering seconds: TimeInterval) -> Int {
+        max(1, Int((seconds / interval).rounded(.up)))
+    }
 
     private var totalStreak = 0
     private var appStreak = 0
@@ -39,9 +47,10 @@ public struct SpikeDetector {
     private var hotSamples = 0
     private var coreSeconds: [String: Double] = [:]
 
-    public init(totalThreshold: Double, appThreshold: Double = 1.0) {
+    public init(totalThreshold: Double, appThreshold: Double = 1.0, interval: TimeInterval = 1) {
         self.totalThreshold = totalThreshold
         self.appThreshold = appThreshold
+        self.interval = interval
     }
 
     /// The spike in progress, if one is open.
@@ -86,8 +95,8 @@ public struct SpikeDetector {
             .filter { $0.averageCores >= 0.1 }
             .sorted { ($0.averageCores, $1.name) > ($1.averageCores, $0.name) }
             .prefix(3)
-        // Samples are one second apart, so the last hot sample covers one more second.
-        return Spike(start: start, duration: lastHot.timeIntervalSince(start) + 1,
+        // The last hot sample covers one more interval.
+        return Spike(start: start, duration: lastHot.timeIntervalSince(start) + interval,
                      peakCores: peak, culprits: Array(culprits))
     }
 

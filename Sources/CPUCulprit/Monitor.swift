@@ -2,11 +2,16 @@ import CulpritCore
 import Foundation
 import Observation
 
-/// Samples once a second on a background queue and publishes results on the main queue.
+/// Samples on a background queue and publishes results on the main queue.
 @Observable
 final class Monitor {
-    /// Ten minutes of one second snapshots.
-    static let historyLimit = 600
+    /// How much history the chart keeps, in seconds.
+    static let historySeconds: TimeInterval = 600
+    static let intervalChoices: [TimeInterval] = [1, 2, 5, 10]
+
+    /// Seconds between samples. Each sample is an average over this long, so a longer
+    /// interval gives a calmer number and costs less energy.
+    private(set) var interval: TimeInterval
 
     private(set) var latest: Snapshot?
     private(set) var history: [Snapshot] = []
@@ -21,10 +26,13 @@ final class Monitor {
     @ObservationIgnored private let timer: DispatchSourceTimer
 
     init() {
-        detector = SpikeDetector(totalThreshold: 0.4 * cpuCount)
+        let saved = UserDefaults.standard.double(forKey: "updateInterval")
+        let seconds = Self.intervalChoices.contains(saved) ? saved : 1
+        interval = seconds
+        detector = SpikeDetector(totalThreshold: 0.4 * cpuCount, interval: seconds)
         spikes = store.load()
         timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "sampler", qos: .utility))
-        timer.schedule(deadline: .now(), repeating: 1.0, leeway: .milliseconds(100))
+        timer.schedule(deadline: .now(), repeating: seconds, leeway: .milliseconds(100))
         let sampler = Sampler()
         timer.setEventHandler { [weak self] in
             guard let sample = sampler.sample() else { return }
@@ -32,6 +40,13 @@ final class Monitor {
             DispatchQueue.main.async { self?.apply(snap) }
         }
         timer.resume()
+    }
+
+    func setInterval(_ seconds: TimeInterval) {
+        interval = seconds
+        detector.interval = seconds
+        UserDefaults.standard.set(seconds, forKey: "updateInterval")
+        timer.schedule(deadline: .now() + seconds, repeating: seconds, leeway: .milliseconds(100))
     }
 
     /// Menu bar text: whole machine CPU use, nil before the first sample.
@@ -42,7 +57,7 @@ final class Monitor {
     private func apply(_ snap: Snapshot) {
         latest = snap
         history.append(snap)
-        if history.count > Self.historyLimit { history.removeFirst() }
+        history.removeAll { snap.time.timeIntervalSince($0.time) > Self.historySeconds }
         if let finished = detector.ingest(snap) {
             spikes = SpikeStore.recent([finished] + spikes)
             try? store.save(spikes)

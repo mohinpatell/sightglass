@@ -40,7 +40,7 @@ PNG after 8 seconds and quits. `--show-panel` opens the real panel 3 seconds aft
 
 ## How it works
 
-- **Sampling.** Once a second the app reads cumulative CPU time for every process
+- **Sampling.** Every 1, 2, 5 or 10 seconds (your choice in the panel) the app reads cumulative CPU time for every process
   and subtracts the previous reading. This catches short spikes that the decaying
   average from `ps -o pcpu` smooths over.
 - **Your processes** are read with `proc_pid_rusage`, under a millisecond for all of them.
@@ -51,7 +51,7 @@ PNG after 8 seconds and quits. `--show-panel` opens the real panel 3 seconds aft
 - **Grouping.** Helpers roll up into the outermost `.app` in their path. XPC services
   go to the app they work for. Interpreters are named with their script.
 - **Spikes.** One opens when the machine stays over 40% for 3 seconds or one app stays
-  over a full core for 5 seconds, and closes after 3 calm seconds. Finished spikes are
+  over a full core for 5 seconds (rounded up to whole samples at longer intervals), and closes after 3 calm seconds. Finished spikes are
   kept for 7 days in `~/Library/Application Support/CPU Culprit/spikes.json`.
 
 ## Known limits
