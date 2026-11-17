@@ -35,8 +35,14 @@ struct PanelView: View {
                 Text("Right now").font(.headline)
                 Spacer()
                 if let latest = monitor.latest {
-                    Text(verbatim: "\(percent(latest.totalCores)) of \(ProcessInfo.processInfo.activeProcessorCount * 100)%")
+                    // Whole machine out of 100, with the per core figures it comes from beside it.
+                    let cpus = ProcessInfo.processInfo.activeProcessorCount
+                    Text(verbatim: "\(percent(latest.totalCores)) of \(cpus * 100)%")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Text(percent(latest.totalCores / Double(cpus)))
+                        .font(.headline)
                         .monospacedDigit()
                 }
             }
