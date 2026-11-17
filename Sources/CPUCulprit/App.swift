@@ -57,11 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return text
     }
 
-    /// A thin, dimmed vertical line with a little air on each side.
+    /// A thin vertical line with a little air on each side. It takes the menu bar's own
+    /// text colour: a dimmed one was too faint to see on a dark menu bar.
     private lazy var divider: NSAttributedString = {
         let text = NSMutableAttributedString(string: "\u{2009}\u{2009}|\u{2009}\u{2009}")
-        text.addAttributes([.foregroundColor: NSColor.tertiaryLabelColor,
-                            .font: NSFont.systemFont(ofSize: menuBarFont.pointSize - 1, weight: .light),
+        text.addAttributes([.font: NSFont.systemFont(ofSize: menuBarFont.pointSize - 1, weight: .light),
                             .baselineOffset: 1], range: NSRange(location: 2, length: 1))
         return text
     }()
