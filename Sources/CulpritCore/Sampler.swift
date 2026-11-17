@@ -45,7 +45,17 @@ public struct RawSample: Sendable {
 public final class Sampler {
     public var psThreshold = 0.25
 
-    private var previousCPU: [pid_t: UInt64] = [:]
+    /// One direct reading: cumulative CPU time, and the UUID of the running
+    /// executable, which changes when a process calls exec.
+    private struct Reading {
+        let cpuNanos: UInt64
+        let image: UUID
+    }
+
+    private var previousCPU: [pid_t: Reading] = [:]
+    /// Path and app name per pid. Looking these up costs more than the CPU readings
+    /// themselves, so they are kept until the pid is reused or the process execs.
+    private var names: [pid_t: (path: String, app: String)] = [:]
     private var previousTime: UInt64 = 0
     private var previousTicks: [UInt32] = []
     private var psCPU: [pid_t: UInt64] = [:]
@@ -60,10 +70,10 @@ public final class Sampler {
     public func sample() -> RawSample? {
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         let ticks = hostTicks()
-        var cpu: [pid_t: UInt64] = [:]
+        var cpu: [pid_t: Reading] = [:]
         var unreadable: [pid_t] = []
         for pid in allPids() {
-            if let ns = nativeCPU(pid) { cpu[pid] = ns } else { unreadable.append(pid) }
+            if let reading = nativeCPU(pid) { cpu[pid] = reading } else { unreadable.append(pid) }
         }
 
         let before = (cpu: previousCPU, time: previousTime, ticks: previousTicks)
@@ -74,16 +84,21 @@ public final class Sampler {
 
         let interval = Double(now - before.time)
         var processes: [ProcessUsage] = []
-        for (pid, ns) in cpu {
+        for (pid, reading) in cpu {
             // A missing or larger previous value means a new process or a reused pid.
-            guard let old = before.cpu[pid], ns > old else { continue }
-            let path = nativePath(pid) ?? nativeName(pid)
-            // Only XPC services need the extra lookup, everything else names itself.
-            let responsible = path.contains(".xpc/") ? nativePath(responsiblePid(pid)) : nil
-            let arguments = isInterpreter(path: path) ? nativeArguments(pid) : []
-            let app = appName(path: path, responsiblePath: responsible, arguments: arguments)
-            processes.append(ProcessUsage(pid: pid, path: path, app: app, cores: Double(ns - old) / interval))
+            guard let old = before.cpu[pid], reading.cpuNanos >= old.cpuNanos else {
+                names[pid] = nil
+                continue
+            }
+            if reading.image != old.image { names[pid] = nil }
+            guard reading.cpuNanos > old.cpuNanos else { continue }
+            let name = names[pid] ?? resolveName(pid)
+            names[pid] = name
+            processes.append(ProcessUsage(pid: pid, path: name.path, app: name.app,
+                                          cores: Double(reading.cpuNanos - old.cpuNanos) / interval))
         }
+        // Entries for dead pids are harmless but would pile up over weeks.
+        if names.count > 2 * cpu.count + 100 { names = names.filter { cpu[$0.key] != nil } }
 
         // Tick counters are 32 bit and wrap, so subtract each one with wrapping.
         let delta = zip(ticks, before.ticks).map { UInt64($0 &- $1) }
@@ -120,16 +135,26 @@ public final class Sampler {
         return pids.prefix(Int(max(filled, 0))).filter { $0 > 0 }
     }
 
-    private func nativeCPU(_ pid: pid_t) -> UInt64? {
-        var info = rusage_info_v4()
+    private func nativeCPU(_ pid: pid_t) -> Reading? {
+        // V0 is the cheapest flavor and already has the times and the image UUID.
+        var info = rusage_info_v0()
         let result = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
-                proc_pid_rusage(pid, RUSAGE_INFO_V4, $0)
+                proc_pid_rusage(pid, RUSAGE_INFO_V0, $0)
             }
         }
         guard result == 0 else { return nil }
         // These times are in Mach ticks, which are not nanoseconds on Apple Silicon.
-        return (info.ri_user_time + info.ri_system_time) * UInt64(timebase.numer) / UInt64(timebase.denom)
+        let nanos = (info.ri_user_time + info.ri_system_time) * UInt64(timebase.numer) / UInt64(timebase.denom)
+        return Reading(cpuNanos: nanos, image: UUID(uuid: info.ri_uuid))
+    }
+
+    private func resolveName(_ pid: pid_t) -> (path: String, app: String) {
+        let path = nativePath(pid) ?? nativeName(pid)
+        // Only XPC services need the extra lookup, everything else names itself.
+        let responsible = path.contains(".xpc/") ? nativePath(responsiblePid(pid)) : nil
+        let arguments = isInterpreter(path: path) ? nativeArguments(pid) : []
+        return (path, appName(path: path, responsiblePath: responsible, arguments: arguments))
     }
 
     private func nativePath(_ pid: pid_t) -> String? {

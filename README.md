@@ -35,7 +35,7 @@ Two developer aids:
 ```
 
 The first prints the top five apps once a second. The second draws the panel to a
-PNG after 8 seconds and quits.
+PNG after 8 seconds and quits. `--show-panel` opens the real panel 3 seconds after launch.
 
 ## How it works
 

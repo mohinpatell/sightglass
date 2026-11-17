@@ -13,6 +13,9 @@ final class Monitor {
     private(set) var spikes: [Spike]
     private(set) var currentSpike: Spike?
 
+    /// Called on the main queue after every sample with the new menu bar text.
+    @ObservationIgnored var onHeadline: ((String?) -> Void)?
+
     @ObservationIgnored private var detector: SpikeDetector
     @ObservationIgnored private let store = SpikeStore()
     @ObservationIgnored private let timer: DispatchSourceTimer
@@ -47,6 +50,7 @@ final class Monitor {
             try? store.save(spikes)
         }
         currentSpike = detector.current
+        onHeadline?(headline)
     }
 }
 
