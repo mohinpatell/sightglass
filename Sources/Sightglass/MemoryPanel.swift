@@ -7,6 +7,7 @@ struct MemoryPanel: View {
     @ObservedObject var monitor: Monitor
     /// Height of the expanded "Show all" list, set by the panel to fit the screen.
     let listHeight: CGFloat
+    var density = Density()
     let requestQuit: (AppUsage) -> Void
     @AppStorage("showAllMemory") private var showAll = false
 
@@ -19,7 +20,8 @@ struct MemoryPanel: View {
                     let data = chartPoints(history: monitor.history, bucketSeconds: max(5, monitor.interval),
                                            other: "Everything else", value: { Double($0.memoryBytes) },
                                            total: { Double($0.memory?.usedBytes ?? 0) })
-                    StackedChart(series: data.apps, points: data.points, scale: 1 / gigabyte, unit: " GB")
+                    StackedChart(series: data.apps, points: data.points, scale: 1 / gigabyte, unit: " GB",
+                                 height: density.chartHeight)
                 }
                 growthSection
                 Text("Memory held by system processes cannot be read per app. It is part of the total.")
@@ -115,7 +117,7 @@ struct MemoryPanel: View {
                 Text("No app has grown by 50 MB or more in the last 10 minutes").font(.callout).foregroundStyle(.secondary)
             } else {
                 Text("In the last 10 minutes. A steady climb can mean a leak.").font(.callout).foregroundStyle(.secondary)
-                ForEach(growth.prefix(5), id: \.name) { item in
+                ForEach(growth.prefix(density.growthRows), id: \.name) { item in
                     UsageRow(name: item.name, fraction: Double(item.bytes) / Double(growth[0].bytes), value: "",
                              detail: "+" + bytes(item.bytes))
                 }

@@ -16,6 +16,11 @@ struct PanelView: View {
     @State private var listHeight: CGFloat = PanelView.fullListHeight
     @AppStorage("showAllEnergy") private var showAllEnergy = false
     @AppStorage("showAllMemory") private var showAllMemory = false
+    @AppStorage("showAllSpikes") private var showAllSpikes = false
+    /// Height of the expanded spike list, shrunk like `listHeight` when the screen is short.
+    @State private var spikeListHeight: CGFloat = PanelView.fullSpikeListHeight
+    /// Tightened step by step until the panel fits the screen.
+    @State private var density = Density()
     @AppStorage("menuBarDividers") private var menuBarDividers = false
     /// True while the alert settings replace the panel's usual content.
     /// `-showAlertsPage YES` on the command line opens straight to them.
@@ -28,6 +33,13 @@ struct PanelView: View {
 
     private static let fullListHeight: CGFloat = 176
     private static let shortestListHeight: CGFloat = 88
+    private static let fullSpikeListHeight: CGFloat = 230
+    private static let shortestSpikeListHeight: CGFloat = 110
+    private var spikeListCanShrink: Bool {
+        mode == "cpu" && showAllSpikes && spikeListHeight > Self.shortestSpikeListHeight
+    }
+    /// True while something can still give up room before the whole panel has to scroll.
+    private var canTighten: Bool { listCanShrink || spikeListCanShrink || density.level < Density.tightest }
     private var listIsExpanded: Bool {
         mode == "energy" ? showAllEnergy : mode == "memory" ? showAllMemory : showAllApps
     }
@@ -38,11 +50,12 @@ struct PanelView: View {
     @AppStorage("panelMode") private var mode = "cpu"
 
     /// A popover taller than the screen gets pushed sideways and bent out of shape by
-    /// macOS. So when the content is too tall, the expanded list gives up rows first.
-    /// Only if that is not enough does the whole panel scroll, at exactly `maxHeight`.
+    /// macOS. So when the content is too tall, it gives up room in steps: an expanded
+    /// list gets shorter, then fewer spikes and rows are shown, then the chart gets
+    /// shorter. Only if all of that is not enough does the whole panel scroll.
     var body: some View {
         Group {
-            if contentHeight > maxHeight && !listCanShrink {
+            if contentHeight > maxHeight && !canTighten {
                 ScrollView { measuredContent }.frame(width: 360, height: maxHeight)
             } else {
                 measuredContent
@@ -50,9 +63,20 @@ struct PanelView: View {
         }
         .onPreferenceChange(HeightKey.self) { height in
             contentHeight = height
-            if height > maxHeight && listCanShrink {
+            guard height > maxHeight else { return }
+            if listCanShrink {
                 listHeight = max(Self.shortestListHeight, listHeight - (height - maxHeight))
+            } else if spikeListCanShrink {
+                spikeListHeight = max(Self.shortestSpikeListHeight, spikeListHeight - (height - maxHeight))
+            } else if density.level < Density.tightest {
+                density.level += 1
             }
+        }
+        // A different view or a collapsed list needs different room, so start over.
+        .onChange(of: [mode, "\(showAllApps)\(showAllEnergy)\(showAllMemory)\(showAllSpikes)\(showingAlerts)"]) {
+            density = Density()
+            listHeight = Self.fullListHeight
+            spikeListHeight = Self.fullSpikeListHeight
         }
         .confirmationDialog(quitTarget.map { "Quit \($0.name)?" } ?? "", isPresented: Binding(
             get: { quitTarget != nil }, set: { if !$0 { quitTarget = nil } }
@@ -99,9 +123,9 @@ struct PanelView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             if mode == "energy" {
-                EnergyPanel(monitor: monitor, listHeight: listHeight) { quitTarget = $0 }
+                EnergyPanel(monitor: monitor, listHeight: listHeight, density: density) { quitTarget = $0 }
             } else if mode == "memory" {
-                MemoryPanel(monitor: monitor, listHeight: listHeight) { quitTarget = $0 }
+                MemoryPanel(monitor: monitor, listHeight: listHeight, density: density) { quitTarget = $0 }
             } else {
                 nowSection
                 chartSection
@@ -154,6 +178,9 @@ struct PanelView: View {
                         opensAtLogin = SMAppService.mainApp.status == .enabled
                     }
                 Spacer()
+                Link("Send feedback", destination: URL(string: "https://github.com/mohinpatell/sightglass/issues/new")!)
+                    .help("Report a problem or ask for a change. Opens the project's page in your browser.")
+                    .padding(.trailing, 6)
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }
         }
@@ -236,7 +263,8 @@ struct PanelView: View {
         let data = chartPoints(history: monitor.history, bucketSeconds: max(5, monitor.interval))
         return VStack(alignment: .leading, spacing: 6) {
             Text("Last 10 minutes").font(.headline)
-            StackedChart(series: data.apps, points: data.points, scale: 100 / cpuCount, unit: "%")
+            StackedChart(series: data.apps, points: data.points, scale: 100 / cpuCount, unit: "%",
+                         height: density.chartHeight)
         }
     }
 
@@ -248,10 +276,23 @@ struct PanelView: View {
             if let current = monitor.currentSpike {
                 spikeRow(current, ongoing: true)
             }
-            ForEach(monitor.spikes.prefix(5)) { spike in
-                spikeRow(spike, ongoing: false)
+            // Only the latest few by default. The rest of the week is behind "Show all".
+            let saved = monitor.spikes
+            if showAllSpikes {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(saved) { spikeRow($0, ongoing: false) }
+                    }
+                }
+                .frame(height: spikeListHeight)
+            } else {
+                ForEach(saved.prefix(density.spikes)) { spikeRow($0, ongoing: false) }
             }
-            if monitor.currentSpike == nil && monitor.spikes.isEmpty {
+            if saved.count > density.spikes {
+                Button(showAllSpikes ? "Show latest \(density.spikes)" : "Show all \(saved.count)") { showAllSpikes.toggle() }
+                    .buttonStyle(.link)
+            }
+            if monitor.currentSpike == nil && saved.isEmpty {
                 Text("None recorded yet").foregroundStyle(.secondary)
             }
         }

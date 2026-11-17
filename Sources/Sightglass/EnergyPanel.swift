@@ -7,6 +7,7 @@ struct EnergyPanel: View {
     @ObservedObject var monitor: Monitor
     /// Height of the expanded "Show all" list, set by the panel to fit the screen.
     let listHeight: CGFloat
+    var density = Density()
     let requestQuit: (AppUsage) -> Void
     @AppStorage("showAllEnergy") private var showAll = false
 
@@ -21,7 +22,8 @@ struct EnergyPanel: View {
                     // other apps, the chip's graphics and memory, and hardware no app controls.
                     let appColors: [Color] = [.blue, .orange, .green, .purple]
                     StackedChart(series: data.apps, points: data.points, scale: 1, unit: " W",
-                                 colors: Array(appColors.prefix(data.apps.count - 3)) + [.pink, .teal, .gray.opacity(0.5)])
+                                 colors: Array(appColors.prefix(data.apps.count - 3)) + [.pink, .teal, .gray.opacity(0.5)],
+                                 height: density.chartHeight)
                 }
                 ledgerSection
                 Text("App figures are CPU energy only. Screen and rest is hardware: the screen, anything plugged into the ports, Wi-Fi, storage and conversion losses.")
@@ -134,7 +136,7 @@ struct EnergyPanel: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-                ForEach(ranked.prefix(6), id: \.name) { item in
+                ForEach(ranked.prefix(density.ledgerRows), id: \.name) { item in
                     UsageRow(name: item.name, fraction: item.joules / (ranked.first?.joules ?? 1),
                              value: share(item.joules / total), detail: wattHours(joules: item.joules))
                 }

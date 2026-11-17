@@ -176,12 +176,13 @@ confirmation without quitting anything) and `-panelMaxHeight 600`.
 - **Other users' processes** (WindowServer, mds) refuse that call, so they come from
   `/bin/ps`, which is setuid root. A `ps` run costs 15 to 35 ms, so it only runs
   while the kernel reports at least a quarter core that the direct readings do not
-  explain.
+  explain, and then at most every 3 seconds. In between, the last result is reused.
 - **Short lived commands.** A command that starts and finishes between two samples
   is never seen as a process. When its parent collects it, the kernel adds its CPU
   time to the parent's child time, which the same call returns. Sightglass charges
   that to the parent, after subtracting what a longer lived child was already
-  charged while it was running.
+  charged while it was running. It is never allowed to exceed the CPU the kernel
+  counted that nothing else explains.
 - **Grouping.** Helpers roll up into the outermost `.app` in their path. XPC services
   go to the app they work for. Interpreters are named with their script.
 - **Spikes.** One opens when the machine stays over 40% for 3 seconds or one app
@@ -223,6 +224,13 @@ confirmation without quitting anything) and `-panelMaxHeight 600`.
   which is what Homebrew does, avoids the warning macOS shows for downloaded apps.
 - IOReport, the SMC key names, the battery registry keys and
   `responsibility_get_pid_responsible_for_pid` are undocumented and could change.
+
+## Feedback
+
+Found a problem, or want something changed or added? Open an issue at
+[github.com/mohinpatell/sightglass/issues](https://github.com/mohinpatell/sightglass/issues).
+The "Send feedback" link at the bottom of the panel goes to the same place. It helps
+to say what you expected, what happened, and your Mac model and macOS version.
 
 ## License
 

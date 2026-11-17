@@ -47,6 +47,20 @@ struct UsageRow: View {
     }
 }
 
+/// How much room the panel's sections may take. The panel tightens this step by step
+/// until everything fits on the screen, so nothing has to scroll.
+struct Density {
+    /// 0 is roomy, 3 is the tightest.
+    var level = 0
+
+    var chartHeight: CGFloat { [150, 150, 120, 100][level] }
+    /// Saved spikes shown before "Show all".
+    var spikes: Int { [3, 2, 2, 1][level] }
+    var ledgerRows: Int { [5, 4, 3, 3][level] }
+    var growthRows: Int { [5, 3, 3, 2][level] }
+    static let tightest = 3
+}
+
 /// Two column legend. The chart's built in legend clips long names; this truncates.
 struct DotLegend: View {
     let items: [(name: String, color: Color)]
@@ -79,6 +93,7 @@ struct StackedChart: View {
     let unit: String
     /// One color per series. Left out, the last series is gray and the rest get the usual colors.
     var colors: [Color]?
+    var height: CGFloat = 150
 
     var body: some View {
         let colors = colors ?? seriesColors(count: series.count)
@@ -110,7 +125,7 @@ struct StackedChart: View {
                     }
                 }
             }
-            .frame(height: 150)
+            .frame(height: height)
             DotLegend(items: Array(zip(series, colors)).map { (name: $0.0, color: $0.1) })
         }
     }

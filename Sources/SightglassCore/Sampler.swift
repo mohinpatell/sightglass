@@ -53,7 +53,8 @@ public struct RawSample: Sendable {
 /// which costs under a millisecond for all of them. That call fails with EPERM for
 /// everyone else's processes, so those come from `/bin/ps`, which is setuid root.
 /// A `ps` run costs 15 to 35 ms, so it only happens while the kernel reports at
-/// least `psThreshold` cores of work that the direct readings do not explain.
+/// least `psThreshold` cores of work that the direct readings do not explain, and
+/// then at most every 3 seconds. In between, the last result is reused.
 public final class Sampler {
     public var psThreshold = 0.25
 
@@ -78,6 +79,12 @@ public final class Sampler {
     private var previousTicks: [UInt32] = []
     private var psCPU: [pid_t: UInt64] = [:]
     private var psTime: UInt64 = 0
+    /// What other users' processes used at the last ps run, and when that was.
+    private var systemUsage: [ProcessUsage] = []
+    private var systemAt: UInt64 = 0
+    private var psNeedsFollowUp = false
+    /// ps runs no more often than this, however short the sampling interval.
+    static let psMinimumGap: UInt64 = 3_000_000_000
     private var timebase = mach_timebase_info_data_t()
 
     public init() {
@@ -101,7 +108,6 @@ public final class Sampler {
         guard before.time != 0 else { return nil }
 
         let interval = Double(now - before.time)
-        var processes: [ProcessUsage] = []
         var memory: [String: UInt64] = [:]
         var pids: [String: [pid_t]] = [:]
         // A process that is gone was charged for its CPU while it lived. Its parent is
@@ -110,6 +116,12 @@ public final class Sampler {
             guard let parent = names[pid]?.parent else { continue }
             children.exited(parent: parent, alreadyCharged: old.cpuNanos + old.childNanos, now: now)
         }
+        // What each of our own processes used itself (`cores`), and what the short
+        // lived commands it ran used (`fresh`). Those commands start and finish between
+        // two samples, so they are never seen as processes. The kernel adds their CPU
+        // time to the parent that ran them, which is how a shell or an agent gets
+        // charged for what it spawned.
+        var own: [(pid: pid_t, path: String, app: String, cores: Double, fresh: Double, watts: Double?)] = []
         for (pid, reading) in cpu {
             // A missing or larger previous value means a new process or a reused pid,
             // and a new image means it called exec. Either way the cached name is stale.
@@ -121,19 +133,14 @@ public final class Sampler {
             memory[name.app, default: 0] += reading.footprint
             pids[name.app, default: []].append(pid)
             guard let old, sameProcess else { continue }
-            // Commands that start and finish between two samples are never seen as
-            // processes. The kernel adds their CPU time to the parent that ran them,
-            // which is how a shell or an agent gets charged for what it spawned.
-            var used = reading.cpuNanos - old.cpuNanos
-            if reading.childNanos > old.childNanos {
-                used += children.newWork(parent: pid, childDelta: reading.childNanos - old.childNanos, now: now)
-            }
-            guard used > 0 else { continue }
+            let used = reading.cpuNanos - old.cpuNanos
+            let fresh = reading.childNanos > old.childNanos
+                ? children.newWork(parent: pid, childDelta: reading.childNanos - old.childNanos, now: now) : 0
+            guard used > 0 || fresh > 0 else { continue }
             // Nanojoules over nanoseconds is watts.
             let watts = reading.energyNanojoules >= old.energyNanojoules
                 ? Double(reading.energyNanojoules - old.energyNanojoules) / interval : nil
-            processes.append(ProcessUsage(pid: pid, path: name.path, app: name.app,
-                                          cores: Double(used) / interval, watts: watts))
+            own.append((pid, name.path, name.app, Double(used) / interval, Double(fresh) / interval, watts))
         }
         // Entries for dead pids are harmless but would pile up over weeks.
         if names.count > 2 * cpu.count + 100 { names = names.filter { cpu[$0.key] != nil } }
@@ -144,22 +151,48 @@ public final class Sampler {
         let all = busy + delta[Int(CPU_STATE_IDLE)]
         let cpus = Double(ProcessInfo.processInfo.activeProcessorCount)
         let total = all == 0 ? 0 : Double(busy) / Double(all) * cpus
+        // CPU the kernel counted that our own processes did not use themselves.
+        let gap = max(0, total - own.reduce(0) { $0 + $1.cores })
 
-        var sawEveryProcess = false
-        if total - processes.reduce(0, { $0 + $1.cores }) >= psThreshold {
+        // Other users' processes come from ps. It is the most expensive step by far,
+        // so it runs at most every few seconds and its result is reused in between.
+        if gap >= psThreshold, psNeedsFollowUp || now - psTime >= Self.psMinimumGap {
             let rows = parsePS(runPS(pids: unreadable))
-            // Deltas only mean something against a ps reading from the previous sample.
-            // Otherwise this run is just the baseline for the next one.
-            if psTime == before.time {
-                sawEveryProcess = true
-                for row in rows {
-                    guard let old = psCPU[row.pid], row.cpuNanos > old else { continue }
-                    processes.append(ProcessUsage(pid: row.pid, path: row.path, app: appName(path: row.path),
-                                                  cores: Double(row.cpuNanos - old) / interval))
+            let window = Double(now - psTime)
+            // Rates only mean something against a recent reading. Otherwise this run
+            // is just the baseline, and the next sample runs ps again straight away so
+            // a burst is named after one sample instead of three seconds.
+            psNeedsFollowUp = !(psTime != 0 && window <= max(10e9, 2.5 * interval))
+            if !psNeedsFollowUp {
+                systemUsage = rows.compactMap { row in
+                    guard let old = psCPU[row.pid], row.cpuNanos > old else { return nil }
+                    return ProcessUsage(pid: row.pid, path: row.path, app: appName(path: row.path),
+                                        cores: Double(row.cpuNanos - old) / window)
                 }
+                systemAt = now
             }
             psCPU = Dictionary(rows.map { ($0.pid, $0.cpuNanos) }, uniquingKeysWith: { first, _ in first })
             psTime = now
+        }
+
+        var processes: [ProcessUsage] = []
+        let sawEveryProcess = systemAt != 0 && Double(now - systemAt) <= max(2 * Double(Self.psMinimumGap), 1.5 * interval)
+        if sawEveryProcess {
+            // A reused reading can be more than the gap is now. Nothing may add up to
+            // more than the kernel's own total.
+            let shares = capped(systemUsage.map(\.cores), to: gap)
+            for (process, cores) in zip(systemUsage, shares) where cores > 0 {
+                processes.append(ProcessUsage(pid: process.pid, path: process.path, app: process.app, cores: cores))
+            }
+        }
+        // Child time is credited when the parent collects the child, which can be a
+        // sample late and in a lump. It is there to explain the gap, so it is never
+        // allowed to exceed what is left of it.
+        let unexplained = gap - processes.reduce(0) { $0 + $1.cores }
+        let fresh = capped(own.map(\.fresh), to: unexplained)
+        for (process, extra) in zip(own, fresh) where process.cores + extra > 0 {
+            processes.append(ProcessUsage(pid: process.pid, path: process.path, app: process.app,
+                                          cores: process.cores + extra, watts: process.watts))
         }
 
         processes.sort { $0.cores > $1.cores }
@@ -321,5 +354,13 @@ struct ChildLedger {
         guard let debt = owed[parent], now - debt.at <= Self.expiry else { return 0 }
         return debt.nanos
     }
+}
+
+/// Scales `values` down, keeping their proportions, so they add up to at most `limit`.
+func capped(_ values: [Double], to limit: Double) -> [Double] {
+    let limit = max(limit, 0)
+    let sum = values.reduce(0, +)
+    guard sum > limit else { return values }
+    return values.map { $0 * limit / sum }
 }
 

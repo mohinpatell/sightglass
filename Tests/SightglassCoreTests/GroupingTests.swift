@@ -97,3 +97,11 @@ private let second: UInt64 = 1_000_000_000
     #expect(ledger.newWork(parent: 11, childDelta: 400_000_000, now: 40 * second) == 400_000_000)
 }
 
+@Test func cappingKeepsProportionsAndNeverAddsUpToMoreThanTheLimit() {
+    #expect(capped([1, 2], to: 5) == [1, 2])          // already under the limit
+    #expect(capped([6, 2], to: 4) == [3, 1])          // scaled down together
+    #expect(capped([6, 2], to: 0) == [0, 0])
+    #expect(capped([6, 2], to: -1) == [0, 0])         // nothing left to explain
+    #expect(capped([], to: 3).isEmpty)
+}
+
