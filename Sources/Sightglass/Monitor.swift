@@ -1,6 +1,6 @@
 import SightglassCore
 import Foundation
-import Observation
+import Combine
 
 /// One reading in the menu bar: its text and the SF Symbol that labels it. The symbol
 /// is nil when the person chose plain dividers between readings instead.
@@ -10,8 +10,11 @@ struct MenuBarItem: Equatable {
 }
 
 /// Samples on a background queue and publishes results on the main queue.
-@Observable
-final class Monitor {
+///
+/// This is an ObservableObject, not the newer @Observable macro, on purpose: the
+/// macro fails to compile when the compiler and the macOS SDK come from different
+/// releases, which is exactly the mix Homebrew builds with on some Macs.
+final class Monitor: ObservableObject {
     /// How much history the chart keeps, in seconds.
     static let historySeconds: TimeInterval = 600
     static let intervalChoices: [TimeInterval] = [1, 2, 5, 10]
@@ -19,25 +22,25 @@ final class Monitor {
     /// Seconds between samples while plugged in, and while on battery. Each sample is
     /// an average over the interval, so a longer one gives a calmer number and costs
     /// less energy, which only matters on battery.
-    private(set) var intervalOnPower: TimeInterval
-    private(set) var intervalOnBattery: TimeInterval
-    private(set) var onBattery: Bool
+    @Published private(set) var intervalOnPower: TimeInterval
+    @Published private(set) var intervalOnBattery: TimeInterval
+    @Published private(set) var onBattery: Bool
 
-    private(set) var latest: Snapshot?
-    private(set) var history: [Snapshot] = []
-    private(set) var spikes: [Spike]
-    private(set) var currentSpike: Spike?
-    private(set) var ledger = EnergyLedger()
+    @Published private(set) var latest: Snapshot?
+    @Published private(set) var history: [Snapshot] = []
+    @Published private(set) var spikes: [Spike]
+    @Published private(set) var currentSpike: Spike?
+    @Published private(set) var ledger = EnergyLedger()
     /// Which notifications the person asked for, and their limits. None are on by default.
-    private(set) var alertSettings: AlertSettings
+    @Published private(set) var alertSettings: AlertSettings
 
     /// Called on the main queue after every sample with the new menu bar readings.
-    @ObservationIgnored var onHeadline: (([MenuBarItem]) -> Void)?
+    var onHeadline: (([MenuBarItem]) -> Void)?
 
-    @ObservationIgnored private var alertEngine = AlertEngine()
-    @ObservationIgnored private var detector: SpikeDetector
-    @ObservationIgnored private let store = SpikeStore()
-    @ObservationIgnored private let timer: DispatchSourceTimer
+    private var alertEngine = AlertEngine()
+    private var detector: SpikeDetector
+    private let store = SpikeStore()
+    private let timer: DispatchSourceTimer
 
     /// The interval in use right now.
     var interval: TimeInterval { onBattery ? intervalOnBattery : intervalOnPower }

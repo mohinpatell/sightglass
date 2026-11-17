@@ -4,7 +4,7 @@ import SwiftUI
 /// The Memory side of the panel: what is holding memory now, over the last ten
 /// minutes, and which apps grew.
 struct MemoryPanel: View {
-    let monitor: Monitor
+    @ObservedObject var monitor: Monitor
     /// Height of the expanded "Show all" list, set by the panel to fit the screen.
     let listHeight: CGFloat
     let requestQuit: (AppUsage) -> Void

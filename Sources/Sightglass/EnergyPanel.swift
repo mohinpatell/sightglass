@@ -4,7 +4,7 @@ import SwiftUI
 /// The Energy side of the panel: what is drawing power now, over the last ten
 /// minutes, and in total since the Mac was plugged in or unplugged.
 struct EnergyPanel: View {
-    let monitor: Monitor
+    @ObservedObject var monitor: Monitor
     /// Height of the expanded "Show all" list, set by the panel to fit the screen.
     let listHeight: CGFloat
     let requestQuit: (AppUsage) -> Void

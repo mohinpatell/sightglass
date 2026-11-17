@@ -8,7 +8,7 @@ private struct HeightKey: PreferenceKey {
 }
 
 struct PanelView: View {
-    let monitor: Monitor
+    @ObservedObject var monitor: Monitor
     /// Tallest the panel may be, normally the height of the screen it opens on.
     var maxHeight: CGFloat = .infinity
     @State private var contentHeight: CGFloat = 0

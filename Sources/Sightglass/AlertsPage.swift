@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The alert settings, shown in place of the panel's usual content.
 struct AlertsPage: View {
-    let monitor: Monitor
+    @ObservedObject var monitor: Monitor
     let close: () -> Void
 
     private let durations: [(Double, String)] = [(1, "1 min"), (5, "5 min"), (15, "15 min")]
