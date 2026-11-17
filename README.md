@@ -164,7 +164,8 @@ The app itself takes a few flags so the panel can be checked without clicking:
 Any setting can be overridden for one launch, for example `-panelMode energy`,
 `-showAllApps YES`, `-intervalOnPower 5`, `-menuBarDividers YES`,
 `-showAlertsPage YES`, `-showQuitButtons YES`, `-testQuitDialog YES` (opens the quit
-confirmation without quitting anything) and `-panelMaxHeight 600`.
+confirmation without quitting anything), `-testSwitchTo energy` (switches view two
+seconds after the panel opens) and `-panelMaxHeight 600`.
 
 ## How it works
 

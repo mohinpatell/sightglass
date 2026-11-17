@@ -2,9 +2,23 @@ import SightglassCore
 import ServiceManagement
 import SwiftUI
 
-private struct HeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+/// The content's height, tagged with the fitting state it was measured under.
+///
+/// The tag matters. SwiftUI only reports a preference when its value changes, and a
+/// fitting step does not always change the height (resetting right after tightening
+/// puts it back where it was). Without the tag the fitting would stop there, with
+/// the panel still too tall. With it, every change of state gets measured again.
+private struct Measure: Equatable {
+    var height: CGFloat = 0
+    var state = ""
+}
+
+private struct MeasureKey: PreferenceKey {
+    static let defaultValue = Measure()
+    static func reduce(value: inout Measure, nextValue: () -> Measure) {
+        let next = nextValue()
+        if next.height > value.height { value = next }
+    }
 }
 
 struct PanelView: View {
@@ -21,6 +35,8 @@ struct PanelView: View {
     @State private var spikeListHeight: CGFloat = PanelView.fullSpikeListHeight
     /// Tightened step by step until the panel fits the screen.
     @State private var density = Density()
+    /// Counts how often the fitting started over, so each fresh start is measured.
+    @State private var fitRound = 0
     @AppStorage("menuBarDividers") private var menuBarDividers = false
     /// True while the alert settings replace the panel's usual content.
     /// `-showAlertsPage YES` on the command line opens straight to them.
@@ -61,7 +77,8 @@ struct PanelView: View {
                 measuredContent
             }
         }
-        .onPreferenceChange(HeightKey.self) { height in
+        .onPreferenceChange(MeasureKey.self) { measure in
+            let height = measure.height
             contentHeight = height
             guard height > maxHeight else { return }
             if listCanShrink {
@@ -77,6 +94,7 @@ struct PanelView: View {
             density = Density()
             listHeight = Self.fullListHeight
             spikeListHeight = Self.fullSpikeListHeight
+            fitRound += 1
         }
         .confirmationDialog(quitTarget.map { "Quit \($0.name)?" } ?? "", isPresented: Binding(
             get: { quitTarget != nil }, set: { if !$0 { quitTarget = nil } }
@@ -90,14 +108,21 @@ struct PanelView: View {
         .onAppear {
             // `-testQuitDialog YES` on the command line opens the confirmation for the
             // busiest app, to check how it looks. Nothing is quit unless a button is clicked.
-            guard UserDefaults.standard.bool(forKey: "testQuitDialog") else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { quitTarget = monitor.latest?.apps.first(where: canQuit) }
+            if UserDefaults.standard.bool(forKey: "testQuitDialog") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { quitTarget = monitor.latest?.apps.first(where: canQuit) }
+            }
+            // `-testSwitchTo energy` switches view two seconds after the panel opens, the
+            // way a click on the tab would, to check the panel refits itself.
+            if let target = UserDefaults.standard.string(forKey: "testSwitchTo") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { mode = target }
+            }
         }
     }
 
     private var measuredContent: some View {
-        content.background(GeometryReader { geo in
-            Color.clear.preference(key: HeightKey.self, value: geo.size.height)
+        let state = "\(fitRound) \(density.level) \(listHeight) \(spikeListHeight)"
+        return content.background(GeometryReader { geo in
+            Color.clear.preference(key: MeasureKey.self, value: Measure(height: geo.size.height, state: state))
         })
     }
 
